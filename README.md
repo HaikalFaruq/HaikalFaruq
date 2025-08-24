@@ -46,14 +46,14 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
 
 ---
 
-### 🧱 3D Contribution Graph (Optional)
+### 🧱 3D Contribution Graph
 <p align="center">
   <img src="./profile-3d-contrib/profile-night-rainbow.svg" alt="3D profile contributions"/>
 </p>
 
 ---
 
-### ⏱️ WakaTime (Optional)
+### ⏱️ WakaTime
 <!-- Requires WakaTime account + GitHub Action (athul/waka-readme). The block below will auto‑fill each day. -->
 <!--START_SECTION:waka-->
 
