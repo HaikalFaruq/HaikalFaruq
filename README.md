@@ -26,8 +26,6 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
   </a>
 </p>
 
-> *Inspired by **sinlov**'s “Things I code with” grid and **danielcshn**'s Technology Stack section.*
-
 ---
 
 ### 📊 GitHub Stats
@@ -45,11 +43,6 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
 <p align="center">
   <img src="https://github-readme-activity-graph.vercel.app/graph?username=HaikalFaruq&radius=8&hide_border=true" />
 </p>
-
----
-
-### 🎧 Spotify (Optional)
-[![spotify-github-profile](https://spotify-github-profile.kittinanx.com/api/view?uid=wjwh89f8gjska6137zg7e81vl&cover_image=true&theme=apple&show_offline=false&background_color=121212&interchange=false&mode=light)](https://spotify-github-profile.kittinanx.com/api/view?uid=wjwh89f8gjska6137zg7e81vl&redirect=true)
 
 ---
 
