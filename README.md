@@ -72,68 +72,13 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
 ### ⏱️ WakaTime (Optional)
 <!-- Requires WakaTime account + GitHub Action (athul/waka-readme). The block below will auto‑fill each day. -->
 <!--START_SECTION:waka-->
-<!-- WakaTime stats will be auto-inserted by GitHub Action -->
-<!--END_SECTION:waka-->
 
----
+```txt
+From: 16 August 2025 - To: 23 August 2025
 
-### 📬 Connect with me
-<p>
-  <a href="mailto:haikalfaruq06@gmail.com"><img src="https://img.shields.io/badge/Email-Contact-orange" /></a>
-  <a href="https://www.linkedin.com/in/muhammad-haikal-faruq-923b62336/"><img src="https://img.shields.io/badge/LinkedIn-Connect-0A66C2?logo=linkedin&logoColor=white" /></a>
-  <a href="https://haikalfaruq.github.io"><img src="https://img.shields.io/badge/Website-Portfolio-black" /></a>
-</p>
-
----
-
-#### ⚙️ Setup notes (if you want the dynamic parts)
-- **Stats & Top Languages**: powered by anuraghazra/github-readme-stats — no token needed for basic use.
-- **Streak**: DenverCoder1/github-readme-streak-stats.
-- **Trophies**: ryo-ma/github-profile-trophy.
-- **Activity Graph**: Ashutosh00710/github-readme-activity-graph.
-- **Spotify**: kittinan/spotify-github-profile — deploy on Vercel and use your Spotify UID.
-- **3D contributions**: yoshi389111/github-profile-3d-contrib — set up the action to generate images into `profile-3d-contrib/`.
-- **WakaTime**: athul/waka-readme.
-
-> This layout blends the animated intro + Spotify/Top Projects feel from **danielcshn** with the rich icons + dynamic widgets style from **sinlov**. Keep what you like, comment out what you don’t.
-
----
-
-## 🚀 Activation Guide — Enable *all* dynamic features
-
-> **Copy these files** into your repo `HaikalFaruq/HaikalFaruq`, then add the required GitHub Secrets. After commit, Actions will run automatically.
-
-### 1) WakaTime weekly coding stats (auto‑update README)
-Create file: **`.github/workflows/waka-readme.yml`**
-```yaml
-name: Update WakaTime stats in README
-on:
-  schedule:
-    - cron: '30 0 * * *'   # daily 07:30 WIB
-  workflow_dispatch:
-permissions:
-  contents: write
-jobs:
-  update-waka:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: athul/waka-readme@master
-        with:
-          WAKATIME_API_KEY: ${{ secrets.WAKATIME_API_KEY }}
-          SHOW_TITLE: true
-          TIME_RANGE: last_7_days
-          SHOW_TIME: true
-          SHOW_MASKED_TIME: false
-          LANG_COUNT: 10
-          BLOCKS: ░▒▓█
-          COMMIT_MESSAGE: "chore: update WakaTime stats"
+No activity tracked
 ```
 
-**Secrets needed:** `WAKATIME_API_KEY` (from https://wakatime.com/settings/api-key)
-
-Your README already has the markers:
-```
-<!--START_SECTION:waka-->
 <!--END_SECTION:waka-->
 ```
 
