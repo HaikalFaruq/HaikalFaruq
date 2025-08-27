@@ -6,7 +6,7 @@
   <a href="https://github.com/HaikalFaruq?tab=followers"><img alt="Followers" src="https://img.shields.io/github/followers/HaikalFaruq?style=flat&label=Followers"></a>
   <a href="https://github.com/HaikalFaruq"><img alt="Profile Views" src="https://komarev.com/ghpvc/?username=HaikalFaruq&style=flat"></a>
   <a href="https://www.linkedin.com/in/muhammad-haikal-faruq-923b62336/"><img alt="LinkedIn" src="https://img.shields.io/badge/LinkedIn-0A66C2?logo=linkedin&logoColor=white"></a>
-  <a href="mailto:haikalfaruq06@gmail.com"><img alt="Email" src="https://img.shields.io/badge/Email-contact-orange"></a>
+  <a href="mailto:haikalfaruq2004@gmail.com"><img alt="Email" src="https://img.shields.io/badge/Email-contact-orange"></a>
 </p>
 
 ---
