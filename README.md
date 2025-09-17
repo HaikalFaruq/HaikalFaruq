@@ -31,6 +31,15 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
 ### 📊 GitHub Stats
 
 <p align="center">
+  <a href="https://git.io/streak-stats">
+    <img
+      src="https://github-readme-streak-stats-beryl-mu.vercel.app?user=HaikalFaruq&hide_border=false&date_format=j%20M%5B%20Y%5D"
+      alt="GitHub Streak"
+      width="700"  />
+  </a>
+</p>
+
+<p align="center">
   <img src="https://raw.githubusercontent.com/HaikalFaruq/HaikalFaruq/main/profile-summary-card-output/default/0-profile-details.svg" />
 </p>
 
