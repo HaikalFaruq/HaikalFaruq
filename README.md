@@ -29,13 +29,14 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
 ---
 
 ### 📊 GitHub Stats
-<p align="center">
-  <img height="165" src="https://github-readme-stats.vercel.app/api?username=HaikalFaruq&show_icons=true" />
-  <img height="165" src="https://streak-stats.demolab.com?user=HaikalFaruq" />
-</p>
-<p align="center">
-  <img height="165" src="https://github-readme-stats.vercel.app/api/top-langs/?username=HaikalFaruq&layout=compact" />
-</p>
+
+
+![](https://raw.githubusercontent.com/HaikalFaruq/HaikalFaruq/main/profile-summary-card-output/default/0-profile-details.svg)
+![](https://raw.githubusercontent.com/HaikalFaruq/HaikalFaruq/main/profile-summary-card-output/default/1-repos-per-language.svg)
+![](https://raw.githubusercontent.com/HaikalFaruq/HaikalFaruq/main/profile-summary-card-output/default/2-most-commit-language.svg)
+![](https://raw.githubusercontent.com/HaikalFaruq/HaikalFaruq/main/profile-summary-card-output/default/3-stats.svg)
+![](https://raw.githubusercontent.com/HaikalFaruq/HaikalFaruq/main/profile-summary-card-output/default/4-productive-time.svg)
+
 
 ---
 
