@@ -22,7 +22,7 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
 ### 🧰 Tech & Tools I use
 <p>
   <a href="https://skillicons.dev">
-    <img src="https://skillicons.dev/icons?i=js,ts,html,css,react,vue,tailwind,bootstrap,vite,webpack,redux,nodejs,express,python,java,go,fastapi,flask,postgres,mysql,mongodb,redis,prisma,sequelize,git,github,linux,docker,kubernetes,nginx,vercel,netlify,aws,gcp" alt="skills"/>
+    <img src="https://skillicons.dev/icons?i=js,ts,html,css,react,vue,tailwind,bootstrap,vite,webpack,redux,nodejs,express,python,java,go,fastapi,flask,postgres,mysql,mongodb,sequelize,git,github,linux,docker,kubernetes,nginx,vercel,netlify,aws,gcp,flutter" alt="skills"/>
   </a>
 </p>
 
