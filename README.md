@@ -77,11 +77,11 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
 <!--START_SECTION:waka-->
 
 ```txt
-Dart         1 hr 34 mins    ██████░░░░░░░░░░░░░░░░░░░   24.38 %
-HTML         1 hr 31 mins    ██████░░░░░░░░░░░░░░░░░░░   23.77 %
-Bash         1 hr 31 mins    ██████░░░░░░░░░░░░░░░░░░░   23.62 %
-Markdown     46 mins         ███░░░░░░░░░░░░░░░░░░░░░░   12.13 %
-JavaScript   34 mins         ██▒░░░░░░░░░░░░░░░░░░░░░░   08.92 %
+Dart         4 hrs 15 mins   ██████████▓░░░░░░░░░░░░░░   42.00 %
+Bash         2 hrs 15 mins   █████▓░░░░░░░░░░░░░░░░░░░   22.23 %
+HTML         1 hr 31 mins    ███▓░░░░░░░░░░░░░░░░░░░░░   15.13 %
+Markdown     48 mins         ██░░░░░░░░░░░░░░░░░░░░░░░   07.95 %
+JavaScript   36 mins         █▒░░░░░░░░░░░░░░░░░░░░░░░   05.94 %
 ```
 
 <!--END_SECTION:waka-->
