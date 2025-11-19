@@ -77,11 +77,11 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
 <!--START_SECTION:waka-->
 
 ```txt
-Dart                10 hrs 45 mins  ██████████████████████▒░░   89.87 %
-Gradle Kotlin DSL   52 mins         █▓░░░░░░░░░░░░░░░░░░░░░░░   07.28 %
-Bash                9 mins          ▒░░░░░░░░░░░░░░░░░░░░░░░░   01.38 %
-Java                6 mins          ▒░░░░░░░░░░░░░░░░░░░░░░░░   00.94 %
-Markdown            3 mins          ░░░░░░░░░░░░░░░░░░░░░░░░░   00.50 %
+Dart              8 hrs 41 mins   ████████████████████████░   95.35 %
+Bash              9 mins          ▒░░░░░░░░░░░░░░░░░░░░░░░░   01.81 %
+Java              8 mins          ▒░░░░░░░░░░░░░░░░░░░░░░░░   01.51 %
+Markdown          3 mins          ▒░░░░░░░░░░░░░░░░░░░░░░░░   00.67 %
+Java Properties   3 mins          ░░░░░░░░░░░░░░░░░░░░░░░░░   00.60 %
 ```
 
 <!--END_SECTION:waka-->
