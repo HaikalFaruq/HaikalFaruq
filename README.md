@@ -77,8 +77,9 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
 <!--START_SECTION:waka-->
 
 ```txt
-Dart   1 hr 16 mins    ███████████████████████░░   92.21 %
-Java   6 mins          ██░░░░░░░░░░░░░░░░░░░░░░░   07.79 %
+Dart       2 hrs 8 mins    ███████████████████▒░░░░░   77.99 %
+Markdown   29 mins         ████▓░░░░░░░░░░░░░░░░░░░░   18.09 %
+Java       6 mins          █░░░░░░░░░░░░░░░░░░░░░░░░   03.92 %
 ```
 
 <!--END_SECTION:waka-->
