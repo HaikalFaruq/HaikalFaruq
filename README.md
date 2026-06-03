@@ -77,11 +77,8 @@ Hey! I'm **Haikal Faruq** — a software engineer who loves mixing solid enginee
 <!--START_SECTION:waka-->
 
 ```txt
-Python     22 mins               ██████████▓░░░░░░░░░░░░░░   42.47 %
-Markdown   16 mins               ███████▓░░░░░░░░░░░░░░░░░   30.74 %
-HTML       10 mins               ████▓░░░░░░░░░░░░░░░░░░░░   18.95 %
-Dart       2 mins                █▒░░░░░░░░░░░░░░░░░░░░░░░   05.32 %
-Text       1 min                 ▒░░░░░░░░░░░░░░░░░░░░░░░░   01.99 %
+Python   16 mins               █████████████████████▒░░░   85.21 %
+Dart     2 mins                ███▓░░░░░░░░░░░░░░░░░░░░░   14.79 %
 ```
 
 <!--END_SECTION:waka-->
