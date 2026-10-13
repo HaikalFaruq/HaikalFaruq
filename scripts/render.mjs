@@ -622,33 +622,47 @@ function stats(t, L, s) {
 
 // ---------------------------------------------------------------------------
 // Contribution calendar: a year of days as a heat map that folds up into a
-// skyline.
+// skyline, and back down again.
 //
 // It is one scene. Every day is a box on a grid of weeks (x) by weekdays (y).
 // The flat view is that grid seen straight down; the 3D view is the same grid
-// from the corner. The entrance swings a single camera between the two (an
-// animated transform on the group that holds the grid) while each week's bars
-// rise in a wave from the oldest week to the newest. Bars live in grid units
-// inside that group, so the whole scene stays coherent at every frame and the
-// final state is exact. Without animation (reduced motion) the final state is
-// what the attributes describe.
+// from the corner. A single camera (an animated transform on the group that
+// holds the grid) swings between the two while each week's bars rise, or
+// settle, in a wave from the oldest week to the newest. README images cannot
+// take input, so instead of a toggle the card alternates on its own: the
+// skyline holds for nine seconds, folds flat, holds, and rises again. Bars
+// live in grid units inside the camera group, so the scene stays coherent at
+// every frame, and without animation (reduced motion) the attributes describe
+// the skyline.
 
-const YAW = (22 * Math.PI) / 180;
-const ELEV = (40 * Math.PI) / 180;
+const YAW = (40 * Math.PI) / 180;
+const ELEV = (35 * Math.PI) / 180;
 const easeInOutCubic = (x) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
 const BAR_W = 0.86;
 const BAR_OFF = (1 - BAR_W) / 2;
 
+// Schedule, ms after first paint: the flat grid rises after a second, holds
+// as a skyline, folds flat, holds, and so on; after the third rise it rests.
+// Every step is a one-shot animation with its own delay (five per element),
+// so nothing is running between steps: a running animation keeps the whole
+// image repainting at 60fps, a finished or pending one costs nothing.
+const SWING = 1200;
+const RISE = 650;
+const HOLD_3D = 9000;
+const HOLD_2D = 3500;
+const STEPS_AT = [1000];
+for (let i = 1; i < 5; i++) STEPS_AT[i] = STEPS_AT[i - 1] + SWING + (i % 2 ? HOLD_3D : HOLD_2D);
+const UP = (i) => i % 2 === 0; // steps 0, 2, 4 rise; 1, 3 settle
+
 function calendar(t, L, s) {
   const G = new Glyphs();
   const { m, W, narrow } = L;
-  const inner = W - 2 * m;
   const weeks = s.weeks;
   const NW = weeks.length;
   const cells = [];
   weeks.forEach((w, x) => w.forEach((d) => cells.push({ ...d, x, y: d.weekday })));
   const max = Math.max(1, ...cells.map((c) => c.count));
-  const hOf = (count) => (count ? 0.4 + (count / max) ** 0.85 * 6.8 : 0.2);
+  const hOf = (count) => (count ? 0.4 + (count / max) ** 0.85 * 6.8 : 0);
 
   // Camera. e = 0 looks straight down, e = 1 is the corner view.
   const cam = (e) => {
@@ -672,35 +686,44 @@ function calendar(t, L, s) {
       add(d.x + 1, d.y + 1, 0); add(d.x, d.y + 1, 0); add(d.x + 1, d.y, 0);
     }
     // Room for the month labels along the front edge in 3D.
-    add(0, 7 + 1.7 * e, 0);
-    add(NW, 7 + 1.7 * e, 0);
+    add(0, 7 + 1.6 * e, 0);
+    add(NW, 7 + 1.6 * e, 0);
     return { minx, maxx, miny, maxy };
   };
 
-  // Stage: the chart box. Its height comes from the 3D view at the scale that
-  // fits the width; the flat view is centred in it.
+  // Layout: heading, then a bordered box holding the stage and a footer row
+  // with the legend. The stage is sized for the skyline at the scale that
+  // fits the width; the flat grid and its row of figures sit centred in it.
   const head = cardHeading(G, t, L, {
     title: 'Contribution calendar',
     subtitle: `Every day from ${dayLabel(s.weeks[0][0].date, true)} to ${dayLabel(s.today, true)}, private work included.`,
   });
-  const stageTop = head.bottom - 6;
-  const pad = 4;
+  const boxX = m, boxW = W - 2 * m, boxTop = head.bottom + 4;
+  const pad = narrow ? 10 : 20;
   const gutter = narrow ? 0 : 34; // weekday names left of the flat grid
+  const stageTop = boxTop + 1;
   const ext1 = extent(cam(1), 1);
-  const s1 = (inner - 2 * pad) / (ext1.maxx - ext1.minx);
+  const s1 = (boxW - 2 - 2 * pad) / (ext1.maxx - ext1.minx);
   const stageH = Math.ceil((ext1.maxy - ext1.miny) * s1 + 2 * pad);
   const stageBottom = stageTop + stageH;
+  const left0 = boxX + 1 + pad + gutter;
+  const aw0 = boxX + boxW - 1 - pad - left0;
+  const s0 = aw0 / NW;
+  const mapH = 7 * s0;
+  // The flat view's block: month labels, the grid, and (wide) a row of figures.
+  const rowH = narrow ? 0 : 58 + 34;
+  const block = 22 + mapH + rowH;
+  const mapTop = stageTop + Math.max(pad + 22, (stageH - block) / 2 + 22);
 
-  // The camera as an SVG matrix for a given e, fitted and centred in the stage.
+  // The camera as an SVG matrix for a given e, fitted and centred in a box
+  // that grows from the flat grid's slot to the whole stage.
   const matrixAt = (e) => {
     const c = cam(e);
     const b = extent(c, e);
-    const left = m + pad + gutter * (1 - e);
-    const top = stageTop + pad + 18 * (1 - e);
-    const aw = W - m - pad - left;
-    // The flat grid sits a little above the stage's centre, clear of the
-    // figures under it; the swing brings it down into the full stage.
-    const ah = (stageBottom - pad - top) * (0.74 + 0.26 * e);
+    const left = boxX + 1 + pad + gutter * (1 - e);
+    const aw = boxX + boxW - 1 - pad - left;
+    const top = mapTop + (stageTop + pad - mapTop) * e;
+    const ah = mapH + (stageH - 2 * pad - mapH) * e;
     const bw = b.maxx - b.minx;
     const bh = b.maxy - b.miny;
     const sc = Math.min(aw / bw, ah / bh);
@@ -717,24 +740,21 @@ function calendar(t, L, s) {
   // camera matrix maps it to straight up on screen).
   const u = [(-M1.c.ce / M1.c.se) * M1.c.sn, (-M1.c.ce / M1.c.se) * M1.c.cs];
 
-  // Timing (ms). The flat grid holds, the camera swings, bars rise in a wave
-  // from the oldest week to the newest, then the labels and stats settle.
-  const HOLD = 450;
-  const SWING = 1200;
-  const RISE = 650;
-  const waveStart = (x, y) => HOLD + SWING * (0.3 + 0.42 * (NW > 1 ? x / (NW - 1) : 0) + 0.04 * (y / 6));
-  const settle = HOLD + SWING * 0.76 + RISE; // the last bar is up
-
-  // Bars, painted back to front for the corner view.
+  // Bars, painted back to front for the corner view. Empty days are flat
+  // tiles that never move; they are the floor the skyline stands on.
   const order = [...cells].sort((a, b) => a.x * M1.c.sn + a.y * M1.c.cs - (b.x * M1.c.sn + b.y * M1.c.cs));
   let bars = '';
   for (const d of order) {
     const h = hOf(d.count);
     const x0 = d.x + BAR_OFF, y0 = d.y + BAR_OFF;
     const x1 = x0 + BAR_W, y1 = y0 + BAR_W;
+    if (!d.count) {
+      bars += `<rect class="e${d.date === s.today ? ' td' : ''}" x="${num(x0)}" y="${num(y0)}" width="${BAR_W}" height="${BAR_W}" rx=".09"${d.date === s.today ? ' vector-effect="non-scaling-stroke"' : ''}/>`;
+      continue;
+    }
     const lx = num(u[0] * h), ly = num(u[1] * h);
     bars +=
-      `<g class="l${d.level}${d.date === s.today ? ' td' : ''}" style="--h:${num(h)};--d:${Math.round(waveStart(d.x, d.y))}ms">` +
+      `<g class="l${d.level} w${d.x}${d.date === s.today ? ' td' : ''}" style="--h:${num(h)}">` +
       `<g transform="matrix(${BAR_W} 0 ${lx} ${ly} ${num(x0)} ${num(y1)})"><rect class="a" width="1" height="1"/></g>` +
       `<g transform="matrix(0 ${BAR_W} ${lx} ${ly} ${num(x1)} ${num(y0)})"><rect class="b" width="1" height="1"/></g>` +
       `<rect class="c" x="${num(x0)}" y="${num(y0)}" width="${BAR_W}" height="${BAR_W}" rx=".09" transform="translate(${lx} ${ly})"${d.date === s.today ? ' vector-effect="non-scaling-stroke"' : ''}/>` +
@@ -754,7 +774,7 @@ function calendar(t, L, s) {
   for (const mo of months) {
     const [X, Y] = at0(mo.x + BAR_OFF, 0);
     const tw = measure(mo.label, 'mono-400', 10.5);
-    if (X < edge || X + tw > W - m) continue;
+    if (X < edge || X + tw > boxX + boxW - pad) continue;
     labels2d += text(G, mo.label, { x: X, y: Y - 6, size: 10.5, style: 'mono-400', fill: t.muted });
     edge = X + tw + 8;
   }
@@ -770,114 +790,137 @@ function calendar(t, L, s) {
   const placed = [];
   edge = -Infinity;
   for (const mo of months) {
-    const [X, Y] = at1(mo.x + 0.5, 7.35);
+    const [X, Y] = at1(mo.x + 0.5, 7.3);
     const tw = measure(mo.label, 'mono-400', 10.5);
-    if (X < edge || X + tw > W - m) continue;
+    if (X < edge || X + tw > boxX + boxW - 4) continue;
     labels3d += text(G, mo.label, { x: X, y: Y + 11, size: 10.5, style: 'mono-400', fill: t.muted });
     placed.push({ x: X, y: Y + 11, w: tw });
     edge = X + tw + (narrow ? 6 : 10);
   }
 
-  // Stats. A block is a label, a big value with its unit, and a line under it.
-  const block = (x, y, align, { label, value, unit, sub, size }, ms) => {
+  // Figures. In 3D they sit in the two empty corners of the stage; flat, they
+  // form a row under the grid (wide) or tiles under the box (narrow).
+  const figures = [
+    { label: 'Last 12 months', value: fmt(s.total), unit: plural(s.total, 'contribution'), sub: `on ${fmt(s.activeDays)} active days` },
+    { label: 'Busiest week', value: fmt(s.busiestWeek.total), unit: plural(s.busiestWeek.total, 'contribution'), sub: rangeLabel(s.busiestWeek.start, s.busiestWeek.end) },
+    { label: 'Longest streak', value: String(s.longest.days), unit: plural(s.longest.days, 'day'), sub: s.longest.days ? rangeLabel(s.longest.start, s.longest.end) : 'no streak yet' },
+    { label: 'Current streak', value: String(s.current.days), unit: plural(s.current.days, 'day'), sub: s.current.days ? `since ${dayLabel(s.current.start)}` : 'none in progress' },
+  ];
+  const block3d = (x, y, align, f, size) => {
     const anchor = align === 'end' ? 'end' : 'start';
-    const vw = measure(value, 'sans-600', size, -0.02);
-    const uw = measure(unit, 'sans-400', 13.5);
-    const vx = align === 'end' ? x - uw - 7 : x;
-    const ux = align === 'end' ? x : x + vw + 7;
+    const vw = measure(f.value, 'sans-600', size, -0.02);
+    const uw = measure(f.unit, 'sans-400', 14);
+    const vx = align === 'end' ? x - uw - 8 : x;
+    const ux = align === 'end' ? x : x + vw + 8;
     return (
-      `<g class="rise" ${delay(ms)}>` +
-      text(G, label, { x, y, size: 12.5, style: 'sans-400', fill: t.muted, anchor }) +
-      text(G, value, { x: vx, y: y + size + 2, size, style: 'sans-600', fill: t.ink, anchor, tracking: -0.02 }) +
-      text(G, unit, { x: ux, y: y + size + 2, size: 13.5, style: 'sans-400', fill: t.ink2, anchor }) +
-      text(G, sub, { x, y: y + size + 20, size: 12, style: 'sans-400', fill: t.muted, anchor }) +
-      `</g>`
+      text(G, f.label, { x, y, size: 12.5, style: 'sans-400', fill: t.muted, anchor }) +
+      text(G, f.value, { x: vx, y: y + size + 4, size, style: 'sans-600', fill: t.ink, anchor, tracking: -0.02 }) +
+      text(G, f.unit, { x: ux, y: y + size + 4, size: 14, style: 'sans-400', fill: t.ink2, anchor }) +
+      text(G, f.sub, { x, y: y + size + 23, size: 12, style: 'sans-400', fill: t.muted, anchor })
     );
   };
-  const total = { label: 'Last 12 months', value: fmt(s.total), unit: plural(s.total, 'contribution'), sub: `on ${fmt(s.activeDays)} active days`, size: 38 };
-  const busiest = { label: 'Busiest week', value: fmt(s.busiestWeek.total), unit: plural(s.busiestWeek.total, 'contribution'), sub: rangeLabel(s.busiestWeek.start, s.busiestWeek.end), size: 26 };
-  const longest = { label: 'Longest streak', value: String(s.longest.days), unit: plural(s.longest.days, 'day'), sub: s.longest.days ? rangeLabel(s.longest.start, s.longest.end) : 'no streak yet', size: 26 };
-  const current = { label: 'Current streak', value: String(s.current.days), unit: plural(s.current.days, 'day'), sub: s.current.days ? `since ${dayLabel(s.current.start)}` : 'none in progress', size: 26 };
 
-  // Legend: five small bars, one per level, under the same camera.
+  // Legend: five small bars, one per level, under the same camera, plus the
+  // marker for today.
   const legendW = measure('Less', 'sans-400', 11) + 12 + 5 * 19 + 2 + measure('More', 'sans-400', 11);
-  const legend = (x, y, ms) => {
+  const legend = (x, y) => {
     const sc = 6.5;
     const c = M1.c;
-    let out = `<g class="fade" ${delay(ms)}>` + text(G, 'Less', { x, y: y + 4, size: 11, style: 'sans-400', fill: t.muted });
+    let out = text(G, 'Less', { x, y: y + 4, size: 11, style: 'sans-400', fill: t.muted });
     const lx = x + measure('Less', 'sans-400', 11) + 12;
     const Mlin = [sc * c.cs, sc * c.sn * c.se, -sc * c.sn, sc * c.cs * c.se];
     for (let l = 0; l < 5; l++) {
       const h = 0.25 + l * 0.85;
-      const gx = lx + l * 19;
-      const gy = y + 4;
-      out += `<g class="l${l}" transform="matrix(${Mlin.map((v) => num(v, 4)).join(' ')} ${num(gx)} ${num(gy)})">`;
+      out += `<g class="l${l}" transform="matrix(${Mlin.map((v) => num(v, 4)).join(' ')} ${num(lx + l * 19)} ${num(y + 4)})">`;
       out += `<g transform="matrix(1 0 ${num(u[0] * h, 3)} ${num(u[1] * h, 3)} 0 1)"><rect class="a" width="1" height="1"/></g>`;
       out += `<g transform="matrix(0 1 ${num(u[0] * h, 3)} ${num(u[1] * h, 3)} 1 0)"><rect class="b" width="1" height="1"/></g>`;
       out += `<rect class="c" width="1" height="1" rx=".09" transform="translate(${num(u[0] * h, 3)} ${num(u[1] * h, 3)})"/></g>`;
     }
-    out += text(G, 'More', { x: lx + 5 * 19 + 2, y: y + 4, size: 11, style: 'sans-400', fill: t.muted }) + `</g>`;
-    return out;
+    return out + text(G, 'More', { x: lx + 5 * 19 + 2, y: y + 4, size: 11, style: 'sans-400', fill: t.muted });
   };
+  const todayMark = (x, y) =>
+    `<rect x="${x}" y="${y - 5}" width="10" height="10" rx="2" fill="none" stroke="${t.live}" stroke-width="1.6"/>` +
+    text(G, 'Today', { x: x + 17, y: y + 4, size: 11, style: 'sans-400', fill: t.muted });
 
-  let body = head.svg;
-  let height;
   let extra = '';
+  let footY = stageBottom + 24;
+  const R = boxX + boxW - 1 - pad;
   if (!narrow) {
-    // The year total is the hero, top right beside the heading, where the
-    // newest weeks never reach. The other three figures form a row in the
-    // bottom left corner, placed clear of the month labels that run along the
-    // front edge above them, and the legend sits under the newest weeks.
-    const R = W - m;
-    extra += block(R, 44, 'end', total, 100);
-    const rowX = [m, m + 172, m + 344];
-    const y0 = Math.max(...placed.filter((l) => l.x < rowX[2] + 150).map((l) => l.y + 16), stageTop + 60);
-    extra += block(rowX[0], y0, 'start', longest, 160);
-    extra += block(rowX[1], y0, 'start', current, 210);
-    extra += block(rowX[2], y0, 'start', busiest, 260);
-    const legendY = Math.max(placed.at(-1).y + 24, y0 + 48);
-    extra += legend(R - legendW, legendY, 300);
-    height = Math.max(stageBottom, y0 + 62, legendY + 10) + 24;
+    // Skyline: figures in the corners the band leaves empty.
+    const size = 40;
+    let corners = block3d(R, stageTop + pad + 2, 'end', figures[0], size);
+    corners += block3d(R, stageTop + pad + 2 + 92, 'end', figures[1], size);
+    const bottomY = stageBottom - pad - 2 * 92 + 12;
+    corners += block3d(boxX + 1 + pad, bottomY, 'start', figures[2], size);
+    corners += block3d(boxX + 1 + pad, bottomY + 92, 'start', figures[3], size);
+    extra += `<g class="cs">${corners}</g>`;
+    // Flat: the same figures in a row under the grid.
+    const row = statTiles(G, t, { ...L, m: boxX + 1 + pad }, figures.map((f) => [f.label, f.value, f.unit]), mapTop + mapH + 34);
+    extra += `<g class="rs" opacity="0">${row.svg}</g>`;
+    extra += todayMark(boxX + 1 + pad, footY - 1) + legend(R - legendW, footY);
   } else {
-    const tiles = statTiles(G, t, L, [
-      [total.label, total.value, `on ${fmt(s.activeDays)} days`],
-      [busiest.label, busiest.value, busiest.sub],
-      [longest.label, longest.value, longest.unit],
-      [current.label, current.value, current.unit],
-    ], stageBottom + 30);
+    extra += todayMark(boxX + 1 + pad, footY - 1) + legend(R - legendW, footY);
+  }
+  const boxBottom = footY + 22;
+  let height = boxBottom + 24;
+  if (narrow) {
+    const tiles = statTiles(G, t, L, figures.map((f) => [f.label, f.value, f.unit]), boxBottom + 30);
     extra += tiles.svg;
-    extra += legend(m, tiles.bottom + 30, 300);
-    height = tiles.bottom + 30 + 10 + 26;
+    height = tiles.bottom + 30;
   }
 
+  let body = head.svg;
   body +=
-    `<g class="stage">` +
+    `<rect x="${boxX + 0.5}" y="${boxTop + 0.5}" width="${boxW - 1}" height="${boxBottom - boxTop - 1}" rx="10" fill="none" stroke="${t.grid}"/>` +
     `<g class="g2" opacity="0">${labels2d}</g>` +
     `<g class="world" transform="matrix(${M1.M.map((v) => num(v, 4)).join(' ')})">${bars}</g>` +
     `<g class="g3">${labels3d}</g>` +
-    `</g>` +
     extra;
 
-  // Camera keyframes along the eased path; CSS interpolates between them.
+  // Camera keyframes along the eased path, up and down.
+  const mx = (M) => `matrix(${M.map((v) => num(v, 4)).join(',')})`;
   const STEPS = 12;
-  let frames = '';
+  let camUp = '';
+  let camDown = '';
   for (let k = 0; k <= STEPS; k++) {
-    const { M } = matrixAt(easeInOutCubic(k / STEPS));
-    frames += `${num((100 * k) / STEPS, 2)}%{transform:matrix(${M.map((v) => num(v, 4)).join(',')})}`;
+    const e = easeInOutCubic(k / STEPS);
+    camUp += `${num((100 * k) / STEPS, 2)}%{transform:${mx(matrixAt(e).M)}}`;
+    camDown += `${num((100 * k) / STEPS, 2)}%{transform:${mx(matrixAt(1 - e).M)}}`;
   }
+  // A sequence of one-shot animations: the first fills both ways, the rest
+  // forwards, so each step overrides the one before once it has started.
+  const seq = (names, dur, timing, delays) =>
+    names.map((n, i) => `${n} ${dur}ms ${timing} ${Math.round(delays[i])}ms ${i ? 'forwards' : 'both'}`).join(',');
+  const alt = (a, b) => STEPS_AT.map((_, i) => (UP(i) ? a : b));
+  const ease = 'cubic-bezier(.2,.7,.2,1)';
+  // Each week's bars rise after their place in the wave, and settle in the
+  // opposite order.
+  let weekCss = '';
+  for (let w = 0; w < NW; w++) {
+    const f = NW > 1 ? w / (NW - 1) : 0;
+    const d = STEPS_AT.map((at, i) => Math.round(at + SWING * (0.3 + 0.42 * (UP(i) ? f : 1 - f))));
+    weekCss += `.w${w} .a,.w${w} .b,.w${w} .c{animation-delay:${d.join('ms,')}ms}`;
+  }
+  const lift = `translate(calc(var(--h)*${num(u[0], 4)}px),calc(var(--h)*${num(u[1], 4)}px))`;
   const css =
     t.levels.map((c, l) => `.l${l} .c{fill:${c}}.l${l} .a{fill:${shade(c, 0.84)}}.l${l} .b{fill:${shade(c, 0.68)}}`).join('') +
     `
-.td .c{stroke:${t.live};stroke-width:1.6}
-.stage{animation:fade .3s ease-out both}
-.world{animation:cam ${SWING}ms linear ${HOLD}ms both}
-.a,.b{transform-box:fill-box;transform-origin:0 0;animation:grow ${RISE}ms cubic-bezier(.2,.7,.2,1) var(--d) both}
-.c{animation:lift ${RISE}ms cubic-bezier(.2,.7,.2,1) var(--d) both}
-.g2{animation:out .35s ease-out ${HOLD + 40}ms both}
-.g3{animation:fade .5s ease-out ${HOLD + SWING * 0.72}ms both}
-@keyframes cam{${frames}}
+.e{fill:${t.levels[0]}}
+.td .c,.td.e{stroke:${t.live};stroke-width:1.6}
+.world{animation:${seq(alt('up', 'down'), SWING, 'linear', STEPS_AT)}}
+.a,.b{transform-box:fill-box;transform-origin:0 0;animation:${seq(alt('grow', 'shrink'), RISE, ease, STEPS_AT)}}
+.c{animation:${seq(alt('lift', 'drop'), RISE, ease, STEPS_AT)}}
+${weekCss}
+.g2,.rs{animation:${seq(alt('out', 'in'), 350, 'ease-out', STEPS_AT.map((at, i) => (UP(i) ? at + 40 : at + SWING - 300)))}}
+.g3{animation:${seq(alt('in', 'out'), 400, 'ease-out', STEPS_AT.map((at, i) => (UP(i) ? at + SWING * 0.72 : at)))}}
+.cs{animation:${seq(alt('in', 'out'), 400, 'ease-out', STEPS_AT.map((at, i) => (UP(i) ? at + SWING * 0.8 : at - 100)))}}
+@keyframes up{${camUp}}
+@keyframes down{${camDown}}
 @keyframes grow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
-@keyframes lift{from{transform:none}to{transform:translate(calc(var(--h)*${num(u[0], 4)}px),calc(var(--h)*${num(u[1], 4)}px))}}
+@keyframes shrink{from{transform:scaleY(1)}to{transform:scaleY(0)}}
+@keyframes lift{from{transform:none}to{transform:${lift}}}
+@keyframes drop{from{transform:${lift}}to{transform:none}}
+@keyframes in{from{opacity:0}to{opacity:1}}
 @keyframes out{from{opacity:1}to{opacity:0}}`;
 
   return frame({
