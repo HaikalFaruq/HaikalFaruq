@@ -1,8 +1,19 @@
 #!/usr/bin/env node
-// Renders the SVG graphics that README.md shows, in light and dark variants.
+// Renders the SVG graphics that README.md shows: every card in a light and a
+// dark variant, each at a wide (900px) and a narrow (440px) layout. README.md
+// picks between them with <picture>: the wide files through media queries that
+// combine the color scheme with (min-width: 701px), the narrow ones through a
+// plain "(prefers-color-scheme:dark)" source and the <img> fallback. GitHub's
+// <themed-picture> element rewrites any media query containing the text
+// "prefers-color-scheme: dark" (with that spacing) to follow the viewer's GitHub
+// theme, dropping the rest of the query, so only the wide sources use that
+// spelling; viewers who force a theme get the wide layout on phones, in the
+// right theme, and viewers who sync with the system get everything.
 //
-//   node scripts/render.mjs           all cards (needs GITHUB_TOKEN)
-//   node scripts/render.mjs --static  header and stack only, no network
+//   node scripts/render.mjs                 all cards (needs GITHUB_TOKEN)
+//   node scripts/render.mjs --static        header and stack only, no network
+//   node scripts/render.mjs --cache FILE    reuse fetched data from FILE when it
+//                                           exists (handy while editing layouts)
 //
 // GITHUB_TOKEN      reads the contribution calendar (the Actions token is enough)
 // PROFILE_TOKEN     optional token that can read private repositories; without it
@@ -25,7 +36,14 @@ const LOGIN = 'HaikalFaruq';
 const TIME_ZONE = 'Asia/Jakarta';
 // This profile repo, and a third-party project copied for self-hosting.
 const IGNORED_REPOS = new Set(['HaikalFaruq', 'github-readme-streak-stats']);
-const WIDTH = 900;
+// The komarev counter was added to README.md on 2025-08-24.
+const VIEWS_SINCE = 'Aug 2025';
+
+// Two layouts of every card. `m` is the card's inner margin.
+const LAYOUTS = {
+  wide: { W: 900, m: 32, narrow: false, suffix: '' },
+  narrow: { W: 440, m: 24, narrow: true, suffix: '-narrow' },
+};
 
 const THEMES = {
   light: {
@@ -86,6 +104,21 @@ function layout(str, style, tracking = 0) {
 
 const measure = (str, style, size, tracking = 0) => (layout(str, style, tracking).width * size) / FONTS[style].upm;
 
+// Greedy word wrap to `maxWidth`.
+function wrap(str, style, size, maxWidth) {
+  const lines = [];
+  let line = '';
+  for (const word of str.split(' ')) {
+    const next = line ? `${line} ${word}` : word;
+    if (line && measure(next, style, size) > maxWidth) {
+      lines.push(line);
+      line = word;
+    } else line = next;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 // Returns a <g> that draws `str` with its baseline at y. `matrix` places the text
 // on an arbitrary plane (used for the isometric labels in the header).
 function text(G, str, { x = 0, y = 0, size, style = 'sans-400', fill, anchor = 'start', tracking = 0, matrix }) {
@@ -130,55 +163,84 @@ function logoColor(hex, t) {
 // ---------------------------------------------------------------------------
 // SVG scaffolding
 
+// Entrances are short: the frame of a card (headings, axes, labels) is in place
+// at once and only the data layer moves, so a card never looks like it is
+// still loading.
 const BASE_CSS = `
-.rise{animation:rise .7s cubic-bezier(.2,.7,.2,1) both}
-.fade{animation:fade .8s ease-out both}
+.rise{animation:rise .5s cubic-bezier(.2,.7,.2,1) both}
+.fade{animation:fade .45s ease-out both}
 .pulse{transform-box:fill-box;transform-origin:center;opacity:0;animation:pulse 2.6s ease-out 2s infinite}
-@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 @keyframes pulse{0%{opacity:.7;transform:scale(1)}100%{opacity:0;transform:scale(3.2)}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}`;
 
-function frame({ height, title, G, defs = '', css = '', body, t }) {
+function frame({ L, height, title, G, defs = '', css = '', body, t }) {
+  const W = L.W;
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${height}" viewBox="0 0 ${WIDTH} ${height}" role="img" aria-label="${esc(title)}">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${height}" viewBox="0 0 ${W} ${height}" role="img" aria-label="${esc(title)}">` +
     `<title>${esc(title)}</title>` +
     `<style>${BASE_CSS}${css}</style>` +
-    `<defs>${G.defs()}${defs}<clipPath id="card"><rect width="${WIDTH}" height="${height}" rx="14"/></clipPath></defs>` +
-    `<g clip-path="url(#card)"><rect width="${WIDTH}" height="${height}" fill="${t.surface}"/>${body}</g>` +
-    `<rect x=".5" y=".5" width="${WIDTH - 1}" height="${height - 1}" rx="13.5" fill="none" stroke="${t.border}"/>` +
+    `<defs>${G.defs()}${defs}<clipPath id="card"><rect width="${W}" height="${height}" rx="14"/></clipPath></defs>` +
+    `<g clip-path="url(#card)"><rect width="${W}" height="${height}" fill="${t.surface}"/>${body}</g>` +
+    `<rect x=".5" y=".5" width="${W - 1}" height="${height - 1}" rx="13.5" fill="none" stroke="${t.border}"/>` +
     `</svg>`
   );
 }
 
 const delay = (ms) => `style="animation-delay:${Math.round(ms)}ms"`;
 
-function cardHeading(G, t, { title, subtitle, note }) {
-  return (
-    `<g class="fade">` +
-    text(G, title, { x: 32, y: 46, size: 18, style: 'sans-600', fill: t.ink }) +
-    (note ? text(G, note.toUpperCase(), { x: WIDTH - 32, y: 45, size: 10.5, style: 'mono-500', fill: t.muted, anchor: 'end', tracking: 0.08 }) : '') +
-    text(G, subtitle, { x: 32, y: 69, size: 13.5, style: 'sans-400', fill: t.ink2 }) +
-    `</g>`
-  );
+// Title, subtitle, and an optional note in the top right corner. Returns the
+// markup and the y where the card's content starts. Narrow cards wrap the
+// subtitle and move a note that does not fit under it.
+function cardHeading(G, t, L, { title, subtitle, note }) {
+  const { m, W, narrow } = L;
+  const inner = W - 2 * m;
+  const titleSize = narrow ? 17 : 18;
+  const subSize = narrow ? 13 : 13.5;
+  let svg = text(G, title, { x: m, y: 46, size: titleSize, style: 'sans-600', fill: t.ink });
+  const noteFits = note && measure(title, 'sans-600', titleSize) + measure(note.toUpperCase(), 'mono-500', 10.5, 0.08) + 24 <= inner;
+  if (note && noteFits) svg += text(G, note.toUpperCase(), { x: W - m, y: 45, size: 10.5, style: 'mono-500', fill: t.muted, anchor: 'end', tracking: 0.08 });
+  const lines = wrap(subtitle, 'sans-400', subSize, inner);
+  let y = 69;
+  for (const line of lines) {
+    svg += text(G, line, { x: m, y, size: subSize, style: 'sans-400', fill: t.ink2 });
+    y += 18;
+  }
+  if (note && !noteFits) {
+    svg += text(G, note.toUpperCase(), { x: m, y: y + 2, size: 10.5, style: 'mono-500', fill: t.muted, tracking: 0.08 });
+    y += 20;
+  }
+  return { svg, bottom: y + 9 };
 }
 
-// A row of four stat tiles: label, value, and an optional unit after the value.
-function statTiles(G, t, tiles, y = 96) {
-  const tileW = (WIDTH - 64) / 4;
+// Stat tiles: label, value, and an optional unit after the value. Four across
+// on wide cards, two by two on narrow ones. Returns the y below the tiles.
+function statTiles(G, t, L, tiles, y) {
+  const { m, W, narrow } = L;
+  const cols = narrow ? 2 : 4;
+  const tileW = (W - 2 * m) / cols;
+  const valueSize = narrow ? 26 : 28;
+  const rowH = 58;
+  const rowGap = 18;
   let out = '';
   tiles.forEach(([label, value, unit], i) => {
-    const x = 32 + i * tileW + (i ? 20 : 0);
-    if (i) out += `<rect x="${num(32 + i * tileW)}" y="${y}" width="1" height="58" fill="${t.grid}"/>`;
-    const vw = measure(value, 'sans-600', 28, -0.01);
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const ty = y + row * (rowH + rowGap);
+    const x = m + col * tileW + (col ? 20 : 0);
+    if (col) out += `<rect x="${num(m + col * tileW)}" y="${ty}" width="1" height="${rowH}" fill="${t.grid}"/>`;
+    if (row && !col) out += `<rect x="${m}" y="${ty - rowGap / 2}" width="${W - 2 * m}" height="1" fill="${t.grid}"/>`;
+    const vw = measure(value, 'sans-600', valueSize, -0.01);
     out +=
-      `<g class="rise" ${delay(100 + i * 70)}>` +
-      text(G, label, { x, y: y + 18, size: 12.5, style: 'sans-400', fill: t.muted }) +
-      text(G, value, { x, y: y + 52, size: 28, style: 'sans-600', fill: t.ink, tracking: -0.01 }) +
-      (unit ? text(G, unit, { x: x + vw + 6, y: y + 52, size: 13.5, style: 'sans-500', fill: t.ink2 }) : '') +
+      text(G, label, { x, y: ty + 18, size: 12.5, style: 'sans-400', fill: t.muted }) +
+      `<g class="rise" ${delay(60 + i * 50)}>` +
+      text(G, value, { x, y: ty + 52, size: valueSize, style: 'sans-600', fill: t.ink, tracking: -0.01 }) +
+      (unit ? text(G, unit, { x: x + vw + 6, y: ty + 52, size: 13.5, style: 'sans-500', fill: t.ink2 }) : '') +
       `</g>`;
   });
-  return out;
+  const rows = Math.ceil(tiles.length / cols);
+  return { svg: out, bottom: y + rows * rowH + (rows - 1) * rowGap };
 }
 
 // A column with a rounded top and a square base, as the charts here use.
@@ -191,7 +253,7 @@ function column(x, w, top, base, fill, ms) {
 }
 
 const COLUMN_CSS = `
-.col{transform-box:fill-box;transform-origin:bottom;animation:grow .8s cubic-bezier(.2,.7,.2,1) both}
+.col{transform-box:fill-box;transform-origin:bottom;animation:grow .6s cubic-bezier(.2,.7,.2,1) both}
 @keyframes grow{from{transform:scaleY(0)}to{transform:scaleY(1)}}`;
 
 // ---------------------------------------------------------------------------
@@ -199,13 +261,13 @@ const COLUMN_CSS = `
 
 const COS30 = Math.cos(Math.PI / 6);
 const SIN30 = 0.5;
-const HEADER_H = 280;
 const iso = (x, y, z) => [(x - y) * COS30, (x + y) * SIN30 - z];
 
 // An exploded isometric stack (data, API, client) with a request travelling
 // down the right edge and the response coming back up the left edge.
-function header(t) {
+function header(t, L) {
   const G = new Glyphs();
+  const { m, W, narrow } = L;
   const S = 120;
   const T = 6;
   const GAP = 62;
@@ -255,12 +317,12 @@ function header(t) {
   const plate = ({ label, z, top }, i) => {
     const [lx, ly] = iso(10, S - 9, top);
     return (
-      `<g class="plate" ${delay(120 + i * 150)}>` +
+      `<g class="plate" ${delay(80 + i * 120)}>` +
       poly([[S, 0, z], [S, S, z], [S, S, top], [S, 0, top]], `fill="${t.plateRight}" ${edge}`) +
       poly([[0, S, z], [S, S, z], [S, S, top], [0, S, top]], `fill="${t.plateLeft}" ${edge}`) +
       quad(0, 0, S, S, top, `fill="${t.plateTop}" ${edge}`) +
       // The label lies flat on the top face, reading along the front left edge.
-      text(G, label, { size: 11, style: 'mono-500', fill: t.muted, tracking: 0.16, matrix: [COS30, SIN30, -COS30, SIN30, lx, ly] }) +
+      text(G, label, { size: 12, style: 'mono-500', fill: t.ink2, tracking: 0.16, matrix: [COS30, SIN30, -COS30, SIN30, lx, ly] }) +
       faces[label](top) +
       `</g>`
     );
@@ -289,38 +351,92 @@ function header(t) {
   const [rx, rTop] = iso(S, 0, LEVELS[2].z);
   const [lx, lBottom] = iso(0, S, LEVELS[0].top);
   const travel = num(iso(S, 0, LEVELS[0].top)[1] - rTop);
+  // The packets are the only looping motion on the page, so they stay small
+  // and quiet: a 2.8px dot with a faint halo on a 6s cycle.
   const packet = (x, y, cls, color) =>
-    `<g class="${cls}"><circle cx="${num(x)}" cy="${num(y)}" r="7" fill="${color}" opacity=".22"/><circle cx="${num(x)}" cy="${num(y)}" r="3.2" fill="${color}"/></g>`;
+    `<g class="${cls}"><circle cx="${num(x)}" cy="${num(y)}" r="6" fill="${color}" opacity=".16"/><circle cx="${num(x)}" cy="${num(y)}" r="2.8" fill="${color}"/></g>`;
 
   const stack =
     plate(LEVELS[0], 0) +
-    `<g class="plate" ${delay(120)}>${rails(S, 0)}${rails(0, S)}</g>` +
+    `<g class="plate" ${delay(80)}>${rails(S, 0)}${rails(0, S)}</g>` +
     plate(LEVELS[1], 1) +
     plate(LEVELS[2], 2) +
-    `<g class="plate" ${delay(560)}>${shadow(12, 16, 72, 70)}${shadow(82, 28, 106, 84)}${browser}${phone}</g>` +
+    `<g class="plate" ${delay(440)}>${shadow(12, 16, 72, 70)}${shadow(82, 28, 106, 84)}${browser}${phone}</g>` +
     packet(rx, rTop, 'req', t.warm) +
     packet(lx, lBottom, 'res', t.accent);
 
-  // Fit the illustration into the right side of the card.
+  // Fit the illustration into its box: right of the text on wide cards, under
+  // it on narrow ones.
   const corners = LEVELS.flatMap(({ z, top }) => [[0, 0], [S, 0], [S, S], [0, S]].flatMap(([x, y]) => [iso(x, y, z), iso(x, y, top)]));
   corners.push(iso(12, 16, CARD_Z), iso(72, 16, CARD_Z));
   const minX = Math.min(...corners.map((p) => p[0]));
   const maxX = Math.max(...corners.map((p) => p[0]));
   const minY = Math.min(...corners.map((p) => p[1]));
   const maxY = Math.max(...corners.map((p) => p[1]));
-  const box = { x: 604, y: 26, w: 266, h: 230 };
+
+  // Text block. On wide cards it sits left of the illustration.
+  const cta = 'OPEN TO NEW PROJECTS';
+  let textBlock = '';
+  let textBottom;
+  let box;
+  let height;
+  if (!narrow) {
+    height = 280;
+    box = { x: 604, y: 26, w: 266, h: 230 };
+    const ctaX = 554 - measure(cta, 'mono-500', 11, 0.1);
+    textBlock =
+      `<g class="rise" ${delay(0)}>${text(G, 'SOFTWARE ENGINEER · FULL STACK WEB AND MOBILE', { x: 44, y: 76, size: 11.5, style: 'mono-500', fill: t.accent, tracking: 0.12 })}</g>` +
+      `<g class="rise" ${delay(60)}>${text(G, 'Muhammad Haikal Faruq', { x: 42, y: 126, size: 44, style: 'sans-600', fill: t.ink, tracking: -0.02 })}</g>` +
+      `<g class="rise" ${delay(120)}>${text(G, 'Reliable web and mobile products, delivered end to end.', { x: 44, y: 162, size: 17, style: 'sans-500', fill: t.ink })}</g>` +
+      `<g class="rise" ${delay(170)}>${text(G, 'Clean architecture, tested releases, and support long after launch.', { x: 44, y: 186, size: 15, style: 'sans-400', fill: t.ink2 })}</g>` +
+      `<g class="fade" ${delay(260)}><rect x="44" y="208" width="510" height="1" fill="${t.border}"/>` +
+      text(G, 'BEKASI, INDONESIA', { x: 44, y: 238, size: 11, style: 'mono-400', fill: t.muted, tracking: 0.1 }) +
+      `<circle class="pulse" cx="${num(ctaX - 13)}" cy="234.5" r="3.5" fill="${t.live}"/>` +
+      `<circle cx="${num(ctaX - 13)}" cy="234.5" r="3.5" fill="${t.live}"/>` +
+      text(G, cta, { x: ctaX, y: 238, size: 11, style: 'mono-500', fill: t.ink2, tracking: 0.1 }) +
+      `</g>`;
+  } else {
+    const inner = W - 2 * m;
+    const sub = wrap('Clean architecture, tested releases, and support long after launch.', 'sans-400', 13.5, inner);
+    let y = 52;
+    textBlock += `<g class="rise" ${delay(0)}>${text(G, 'SOFTWARE ENGINEER · FULL STACK WEB AND MOBILE', { x: m, y, size: 10.5, style: 'mono-500', fill: t.accent, tracking: 0.1 })}</g>`;
+    y += 40;
+    textBlock += `<g class="rise" ${delay(60)}>${text(G, 'Muhammad Haikal Faruq', { x: m - 2, y, size: 32, style: 'sans-600', fill: t.ink, tracking: -0.02 })}</g>`;
+    y += 30;
+    textBlock += `<g class="rise" ${delay(120)}>${text(G, 'Reliable web and mobile products,', { x: m, y, size: 15, style: 'sans-500', fill: t.ink })}</g>`;
+    y += 20;
+    textBlock += `<g class="rise" ${delay(120)}>${text(G, 'delivered end to end.', { x: m, y, size: 15, style: 'sans-500', fill: t.ink })}</g>`;
+    y += 22;
+    for (const line of sub) {
+      textBlock += `<g class="rise" ${delay(170)}>${text(G, line, { x: m, y, size: 13.5, style: 'sans-400', fill: t.ink2 })}</g>`;
+      y += 18;
+    }
+    y += 6;
+    const ctaX = W - m - measure(cta, 'mono-500', 10.5, 0.1);
+    textBlock +=
+      `<g class="fade" ${delay(260)}><rect x="${m}" y="${y}" width="${inner}" height="1" fill="${t.border}"/>` +
+      text(G, 'BEKASI, INDONESIA', { x: m, y: y + 27, size: 10.5, style: 'mono-400', fill: t.muted, tracking: 0.1 }) +
+      `<circle class="pulse" cx="${num(ctaX - 12)}" cy="${y + 23.5}" r="3.5" fill="${t.live}"/>` +
+      `<circle cx="${num(ctaX - 12)}" cy="${y + 23.5}" r="3.5" fill="${t.live}"/>` +
+      text(G, cta, { x: ctaX, y: y + 27, size: 10.5, style: 'mono-500', fill: t.ink2, tracking: 0.1 }) +
+      `</g>`;
+    textBottom = y + 40;
+    box = { x: m, y: textBottom + 6, w: inner, h: 190 };
+    height = box.y + box.h + 22;
+  }
+
   const k = Math.min(box.w / (maxX - minX), box.h / (maxY - minY));
   const ox = box.x + (box.w - (maxX - minX) * k) / 2 - minX * k;
   const oy = box.y + (box.h - (maxY - minY) * k) / 2 - minY * k;
-  const cx = num((ox + ((minX + maxX) / 2) * k) / WIDTH, 3);
-  const cy = num((oy + ((minY + maxY) / 2) * k) / HEADER_H, 3);
+  const cx = num((ox + ((minX + maxX) / 2) * k) / W, 3);
+  const cy = num((oy + ((minY + maxY) / 2) * k) / height, 3);
 
   const css = `
-.plate{animation:rise .8s cubic-bezier(.2,.7,.2,1) both}
+.plate{animation:rise .6s cubic-bezier(.2,.7,.2,1) both}
 .float{animation:float 5s ease-in-out 1.2s infinite alternate}
-.req,.res{opacity:0;animation:req 4.8s cubic-bezier(.45,0,.55,1) 1.4s infinite}
+.req,.res{opacity:0;animation:req 6s cubic-bezier(.45,0,.55,1) 1.6s infinite}
 .res{animation-name:res}
-.ping{opacity:0;animation:ping 4.8s ease-out 1.4s infinite}
+.ping{opacity:0;animation:ping 6s ease-out 1.6s infinite}
 @keyframes float{from{transform:translateY(0)}to{transform:translateY(-4px)}}
 @keyframes req{0%{opacity:0;transform:translateY(0)}6%{opacity:1}40%{opacity:1;transform:translateY(${travel}px)}46%,100%{opacity:0;transform:translateY(${travel}px)}}
 @keyframes res{0%,48%{opacity:0;transform:translateY(0)}54%{opacity:1}88%{opacity:1;transform:translateY(-${travel}px)}94%,100%{opacity:0;transform:translateY(-${travel}px)}}
@@ -328,30 +444,18 @@ function header(t) {
 
   const defs =
     `<pattern id="dots" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.1" fill="${t.dots}"/></pattern>` +
-    `<radialGradient id="dotFade" cx="${cx}" cy="${cy}" r=".6"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>` +
-    `<mask id="dotMask"><rect width="${WIDTH}" height="${HEADER_H}" fill="url(#dotFade)"/></mask>` +
-    `<radialGradient id="glow" cx="${cx}" cy="${cy}" r=".3"><stop offset="0" stop-color="${t.accent}" stop-opacity=".18"/><stop offset="1" stop-color="${t.accent}" stop-opacity="0"/></radialGradient>`;
+    `<radialGradient id="dotFade" cx="${cx}" cy="${cy}" r="${narrow ? 0.9 : 0.6}"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>` +
+    `<mask id="dotMask"><rect width="${W}" height="${height}" fill="url(#dotFade)"/></mask>` +
+    `<radialGradient id="glow" cx="${cx}" cy="${cy}" r="${narrow ? 0.5 : 0.3}"><stop offset="0" stop-color="${t.accent}" stop-opacity=".18"/><stop offset="1" stop-color="${t.accent}" stop-opacity="0"/></radialGradient>`;
 
-  // Availability sits at the end of the meta row, with a live status dot.
-  const cta = 'OPEN TO NEW PROJECTS';
-  const ctaX = 554 - measure(cta, 'mono-500', 11, 0.1);
   const body =
-    `<rect width="${WIDTH}" height="${HEADER_H}" fill="url(#dots)" mask="url(#dotMask)"/>` +
-    `<rect width="${WIDTH}" height="${HEADER_H}" fill="url(#glow)"/>` +
-    `<g class="rise" ${delay(0)}>${text(G, 'SOFTWARE ENGINEER · FULL STACK WEB AND MOBILE', { x: 44, y: 76, size: 11.5, style: 'mono-500', fill: t.accent, tracking: 0.12 })}</g>` +
-    `<g class="rise" ${delay(90)}>${text(G, 'Muhammad Haikal Faruq', { x: 42, y: 126, size: 44, style: 'sans-600', fill: t.ink, tracking: -0.02 })}</g>` +
-    `<g class="rise" ${delay(180)}>${text(G, 'Reliable web and mobile products, delivered end to end.', { x: 44, y: 162, size: 17, style: 'sans-500', fill: t.ink })}</g>` +
-    `<g class="rise" ${delay(250)}>${text(G, 'Clean architecture, tested releases, and support long after launch.', { x: 44, y: 186, size: 15, style: 'sans-400', fill: t.ink2 })}</g>` +
-    `<g class="fade" ${delay(360)}><rect x="44" y="208" width="510" height="1" fill="${t.border}"/>` +
-    text(G, 'BEKASI, INDONESIA', { x: 44, y: 238, size: 11, style: 'mono-400', fill: t.muted, tracking: 0.1 }) +
-    `<circle class="pulse" cx="${num(ctaX - 13)}" cy="234.5" r="3.5" fill="${t.live}"/>` +
-    `<circle cx="${num(ctaX - 13)}" cy="234.5" r="3.5" fill="${t.live}"/>` +
-    text(G, cta, { x: ctaX, y: 238, size: 11, style: 'mono-500', fill: t.ink2, tracking: 0.1 }) +
-    `</g>` +
+    `<rect width="${W}" height="${height}" fill="url(#dots)" mask="url(#dotMask)"/>` +
+    `<rect width="${W}" height="${height}" fill="url(#glow)"/>` +
+    textBlock +
     `<g transform="translate(${num(ox)} ${num(oy)}) scale(${num(k, 4)})">${stack}</g>`;
 
   return frame({
-    height: HEADER_H,
+    L, height,
     title: 'Muhammad Haikal Faruq. Software engineer building reliable web and mobile products, open to new projects.',
     G, defs, css, body, t,
   });
@@ -367,35 +471,73 @@ const STACK = [
   ['Tools & release', [['Git', 'git'], ['GitHub Actions', 'githubactions'], ['Vercel', 'vercel'], ['Vitest', 'vitest'], ['Postman', 'postman'], ['App Store', 'appstore'], ['Google Play', 'googleplay']]],
 ];
 
-function stack(t) {
+const STACK_TITLE = `Stack. ${STACK.map(([l, tools]) => `${l}: ${tools.map(([name]) => name).join(', ')}`).join('. ')}.`;
+
+const icon = (slug) => {
+  const i = ICONS[slug];
+  if (!i) throw new Error(`scripts/icons.json has no "${slug}"; add it with scripts/build-icons.mjs`);
+  return i;
+};
+
+function stack(t, L) {
   const G = new Glyphs();
-  const x0 = 196, slot = 96, tile = 46, rowH = 92;
-  let body = cardHeading(G, t, { title: 'Stack', subtitle: 'Tools I use to design, build, and ship products.' });
+  const { m, W, narrow } = L;
+  const head = cardHeading(G, t, L, { title: 'Stack', subtitle: 'Tools I use to design, build, and ship products.' });
+  let body = head.svg;
   let n = 0;
-  STACK.forEach(([label, tools], row) => {
-    const y = 100 + row * rowH;
-    if (row) body += `<rect x="32" y="${y - 14}" width="${WIDTH - 64}" height="1" fill="${t.grid}"/>`;
-    body += `<g class="fade" ${delay(120 + row * 90)}>${text(G, label.toUpperCase(), { x: 32, y: y + tile / 2 + 4, size: 10.5, style: 'mono-500', fill: t.muted, tracking: 0.1 })}</g>`;
-    tools.forEach(([name, slug], i) => {
-      const icon = ICONS[slug];
-      if (!icon) throw new Error(`scripts/icons.json has no "${slug}"; add it with scripts/build-icons.mjs`);
-      const sx = x0 + i * slot;
-      const tx = sx + (slot - tile) / 2;
-      let size = 11.5;
-      while (measure(name, 'sans-500', size) > slot - 6 && size > 9.5) size -= 0.5;
-      body +=
-        `<g class="rise" ${delay(160 + n++ * 22)}>` +
-        `<rect x="${num(tx)}" y="${y}" width="${tile}" height="${tile}" rx="12" fill="${t.raised}" stroke="${t.border}"/>` +
-        `<path transform="translate(${num(tx + 11)} ${y + 11})" fill="${logoColor(icon.hex, t)}" d="${icon.path}"/>` +
-        text(G, name, { x: sx + slot / 2, y: y + tile + 19, size, style: 'sans-500', fill: t.ink2, anchor: 'middle' }) +
-        `</g>`;
+
+  if (!narrow) {
+    // Tiles in a row per category, with the category name in a left column.
+    const x0 = 196, slot = 96, tile = 46, rowH = 90;
+    STACK.forEach(([label, tools], row) => {
+      const y = head.bottom + 4 + row * rowH;
+      if (row) body += `<rect x="${m}" y="${y - 14}" width="${W - 2 * m}" height="1" fill="${t.grid}"/>`;
+      body += text(G, label.toUpperCase(), { x: m, y: y + tile / 2 + 4, size: 10.5, style: 'mono-500', fill: t.muted, tracking: 0.1 });
+      tools.forEach(([name, slug], i) => {
+        const ic = icon(slug);
+        const sx = x0 + i * slot;
+        const tx = sx + (slot - tile) / 2;
+        let size = 11.5;
+        while (measure(name, 'sans-500', size) > slot - 6 && size > 9.5) size -= 0.5;
+        body +=
+          `<g class="rise" ${delay(40 + n++ * 14)}>` +
+          `<rect x="${num(tx)}" y="${y}" width="${tile}" height="${tile}" rx="12" fill="${t.raised}" stroke="${t.border}"/>` +
+          `<path transform="translate(${num(tx + 11)} ${y + 11})" fill="${logoColor(ic.hex, t)}" d="${ic.path}"/>` +
+          text(G, name, { x: sx + slot / 2, y: y + tile + 19, size, style: 'sans-500', fill: t.ink2, anchor: 'middle' }) +
+          `</g>`;
+      });
     });
+    return frame({ L, height: head.bottom + 4 + STACK.length * rowH - 12, title: STACK_TITLE, G, body, t });
+  }
+
+  // Narrow: a wrapped row of chips (logo and name) under each category name.
+  const inner = W - 2 * m;
+  const chipH = 30;
+  let y = head.bottom + 2;
+  STACK.forEach(([label, tools], row) => {
+    if (row) body += `<rect x="${m}" y="${y - 12}" width="${inner}" height="1" fill="${t.grid}"/>`;
+    body += text(G, label.toUpperCase(), { x: m, y: y + 10, size: 10.5, style: 'mono-500', fill: t.muted, tracking: 0.1 });
+    let cx = m;
+    let cy = y + 22;
+    for (const [name, slug] of tools) {
+      const ic = icon(slug);
+      const tw = measure(name, 'sans-500', 12);
+      const cw = Math.round(10 + 16 + 7 + tw + 11);
+      if (cx + cw > m + inner + 0.5) {
+        cx = m;
+        cy += chipH + 8;
+      }
+      body +=
+        `<g class="rise" ${delay(40 + n++ * 14)}>` +
+        `<rect x="${cx}" y="${cy}" width="${cw}" height="${chipH}" rx="9" fill="${t.raised}" stroke="${t.border}"/>` +
+        `<path transform="translate(${cx + 10} ${cy + 7}) scale(0.6667)" fill="${logoColor(ic.hex, t)}" d="${ic.path}"/>` +
+        text(G, name, { x: cx + 33, y: cy + 19.5, size: 12, style: 'sans-500', fill: t.ink2 }) +
+        `</g>`;
+      cx += cw + 8;
+    }
+    y = cy + chipH + 24;
   });
-  return frame({
-    height: 100 + STACK.length * rowH - 10,
-    title: `Stack. ${STACK.map(([l, tools]) => `${l}: ${tools.map(([name]) => name).join(', ')}`).join('. ')}.`,
-    G, body, t,
-  });
+  return frame({ L, height: y - 24 + 22, title: STACK_TITLE, G, body, t });
 }
 
 // ---------------------------------------------------------------------------
@@ -410,150 +552,343 @@ const dayLabel = (iso, withYear = false) => {
   const [y, m, d] = iso.split('-').map(Number);
   return `${d} ${MONTHS[m - 1]}${withYear ? ` ${y}` : ''}`;
 };
+// "6 to 12 Sep" when both days share a month, else "28 Sep to 4 Oct".
+const rangeLabel = (a, b) => (a.slice(0, 7) === b.slice(0, 7) ? `${Number(a.slice(8))} to ${dayLabel(b)}` : `${dayLabel(a)} to ${dayLabel(b)}`);
+const plural = (n, word) => `${word}${n === 1 ? '' : 's'}`;
 
 // ---------------------------------------------------------------------------
-// GitHub stats
+// GitHub stats: everything since the account was created
 
-function stats(t, s) {
+function stats(t, L, s) {
   const G = new Glyphs();
-  let body = cardHeading(G, t, {
+  const { m, W, narrow } = L;
+  const head = cardHeading(G, t, L, {
     title: 'GitHub stats',
     subtitle: `Everything since I joined GitHub in ${s.memberSince}. Private repositories are included.`,
-    note: `Updated ${s.updated}`,
   });
-  body += statTiles(G, t, [
+  let body = head.svg;
+  const tiles = statTiles(G, t, L, [
     ['All-time contributions', fmt(s.allTime), ''],
     [`Contributions in ${s.year}`, fmt(s.thisYear), ''],
     ['Best day', fmt(s.bestDay.count), `on ${dayLabel(s.bestDay.date, true)}`],
-    ['On GitHub since', String(s.memberSince), ''],
-  ]);
+    [`Active days in ${s.year}`, fmt(s.activeThisYear), `of ${s.daysThisYear}`],
+  ], head.bottom);
+  body += tiles.svg;
 
-  const top = 234, base = 312;
-  const chart = (x0, x1, caption, rows, highlight) => {
+  // Columns, with the value above each. Values under 4% of the tallest column
+  // are drawn muted so the eye lands on the years that matter.
+  const chart = (x0, x1, top, base, caption, rows, highlight, ms) => {
     const max = Math.max(1, ...rows.map((r) => r.value));
     const slot = (x1 - x0) / rows.length;
-    let out = `<g class="fade" ${delay(300)}>${text(G, caption, { x: x0, y: 196, size: 12.5, style: 'sans-500', fill: t.ink2 })}</g>`;
+    const colW = Math.min(24, slot * 0.5);
+    let out = text(G, caption, { x: x0, y: top - 34, size: 12.5, style: 'sans-500', fill: t.ink2 });
     out += `<rect x="${x0}" y="${base}" width="${x1 - x0}" height="1" fill="${t.axis}"/>`;
     rows.forEach((r, i) => {
       const cx = x0 + slot * (i + 0.5);
       const h = r.value ? Math.max(3, (r.value / max) * (base - top)) : 0;
       const strong = !highlight || r.value === max;
-      if (h) out += column(cx - 12, 24, base - h, base, strong ? t.accent : t.other, 380 + i * 60);
+      const small = r.value / max < 0.04;
+      if (h) out += column(cx - colW / 2, colW, base - h, base, strong ? t.accent : t.other, ms + i * 40);
       if (!highlight || strong) {
-        out += `<g class="fade" ${delay(900 + i * 60)}>${text(G, r.label, { x: cx, y: base - h - 8, size: 11, style: 'mono-500', fill: t.ink2, anchor: 'middle' })}</g>`;
+        out += `<g class="fade" ${delay(ms + 300 + i * 40)}>${text(G, r.label, { x: cx, y: base - h - 8, size: 11, style: 'mono-500', fill: small ? t.muted : t.ink2, anchor: 'middle' })}</g>`;
       }
       out += text(G, r.name, { x: cx, y: base + 18, size: 10.5, style: 'mono-400', fill: t.muted, anchor: 'middle' });
     });
     return out;
   };
-  body += chart(32, 428, 'Contributions per year', s.perYear.map((y) => ({ name: String(y.year), value: y.total, label: fmt(y.total) })), false);
-  body += chart(472, WIDTH - 32, 'Average per weekday, last 12 months', s.weekdays.map((d) => ({ name: d.name, value: d.avg, label: d.avg.toFixed(1) })), true);
+  const perYear = s.perYear.map((y) => ({ name: String(y.year), value: y.total, label: fmt(y.total) }));
+  const weekdays = s.weekdays.map((d) => ({ name: d.name, value: d.avg, label: d.avg.toFixed(1) }));
+  let height;
+  if (!narrow) {
+    const top = tiles.bottom + 80, base = top + 78;
+    body += chart(m, 428, top, base, 'Contributions per year', perYear, false, 250);
+    body += chart(472, W - m, top, base, 'Average per weekday, last 12 months', weekdays, true, 250);
+    height = base + 44;
+  } else {
+    const top1 = tiles.bottom + 76, base1 = top1 + 70;
+    body += chart(m, W - m, top1, base1, 'Contributions per year', perYear, false, 250);
+    const top2 = base1 + 90, base2 = top2 + 70;
+    body += chart(m, W - m, top2, base2, 'Average per weekday, last 12 months', weekdays, true, 450);
+    height = base2 + 44;
+  }
 
   const busiest = s.weekdays.reduce((a, b) => (b.avg > a.avg ? b : a));
   return frame({
-    height: 356,
+    L, height,
     title: `GitHub stats: ${fmt(s.allTime)} contributions since ${s.memberSince}, ${fmt(s.thisYear)} in ${s.year}, best day ${s.bestDay.count}, busiest weekday ${busiest.name}.`,
     G, css: COLUMN_CSS, body, t,
   });
 }
 
 // ---------------------------------------------------------------------------
-// 3D contribution calendar
+// Contribution calendar: a year of days as a heat map that folds up into a
+// skyline.
+//
+// It is one scene. Every day is a box on a grid of weeks (x) by weekdays (y).
+// The flat view is that grid seen straight down; the 3D view is the same grid
+// from the corner. The entrance swings a single camera between the two (an
+// animated transform on the group that holds the grid) while each week's bars
+// rise in a wave from the oldest week to the newest. Bars live in grid units
+// inside that group, so the whole scene stays coherent at every frame and the
+// final state is exact. Without animation (reduced motion) the final state is
+// what the attributes describe.
 
-// Every day of the last year as an isometric column, one row per weekday,
-// raised by the square root of its count so a single big day does not flatten
-// the rest. Weeks drop in from left to right.
-function calendar(t, s) {
+const YAW = (22 * Math.PI) / 180;
+const ELEV = (40 * Math.PI) / 180;
+const easeInOutCubic = (x) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
+const BAR_W = 0.86;
+const BAR_OFF = (1 - BAR_W) / 2;
+
+function calendar(t, L, s) {
   const G = new Glyphs();
-  const C = 11;
-  const F = 9;
-  const H = 72;
-  const W = s.weeks.length;
-  const max = Math.max(1, ...s.weeks.flat().map((d) => d.count));
-  const height = (count) => (count ? 3 + H * Math.sqrt(count / max) : 1.5);
+  const { m, W, narrow } = L;
+  const inner = W - 2 * m;
+  const weeks = s.weeks;
+  const NW = weeks.length;
+  const cells = [];
+  weeks.forEach((w, x) => w.forEach((d) => cells.push({ ...d, x, y: d.weekday })));
+  const max = Math.max(1, ...cells.map((c) => c.count));
+  const hOf = (count) => (count ? 0.4 + (count / max) ** 0.85 * 6.8 : 0.2);
 
-  const ox = (WIDTH - (W + 7) * C * COS30) / 2 + 7 * C * COS30;
-  const oy = 30 + H;
-  const P = (x, y, z) => {
-    const [X, Y] = iso(x, y, z);
-    return `${num(ox + X, 1)},${num(oy + Y, 1)}`;
+  // Camera. e = 0 looks straight down, e = 1 is the corner view.
+  const cam = (e) => {
+    const yaw = YAW * e;
+    const elev = Math.PI / 2 + (ELEV - Math.PI / 2) * e;
+    return { cs: Math.cos(yaw), sn: Math.sin(yaw), se: Math.sin(elev), ce: Math.cos(elev) };
   };
-  const face = (cls, pts) => `<path class="${cls}" d="M${pts.join('L')}Z"/>`;
-  const topFace = (x, y, h) => [P(x, y, h), P(x + F, y, h), P(x + F, y + F, h), P(x, y + F, h)];
-
-  // Weeks go back to front and days within a week go back to front, which is
-  // enough for the columns to overlap correctly.
-  let grid = '';
-  s.weeks.forEach((week, i) => {
-    let bars = '';
-    for (const d of week) {
-      const x = i * C;
-      const y = d.weekday * C;
-      const h = height(d.count);
-      bars +=
-        face(`r${d.level}`, [P(x + F, y, 0), P(x + F, y + F, 0), P(x + F, y + F, h), P(x + F, y, h)]) +
-        face(`l${d.level}`, [P(x, y + F, 0), P(x + F, y + F, 0), P(x + F, y + F, h), P(x, y + F, h)]) +
-        face(`t${d.level}`, topFace(x, y, h));
-      if (d.date === s.today) bars += `<path class="today" d="M${topFace(x, y, h).join('L')}Z" fill="none" stroke="${t.live}" stroke-width="1.6"/>`;
-    }
-    grid += `<g class="wk" ${delay(250 + i * 16)}>${bars}</g>`;
-  });
-
-  const R = WIDTH - 32;
-  const first = s.weeks[0][0].date;
-  const week = s.busiestWeek;
-  let body =
-    grid +
-    // Headline in the empty top right corner.
-    `<g class="fade" ${delay(200)}>` +
-    text(G, 'Contribution calendar', { x: R, y: 46, size: 18, style: 'sans-600', fill: t.ink, anchor: 'end' }) +
-    text(G, 'Every day of the last 12 months, private work included.', { x: R, y: 69, size: 13.5, style: 'sans-400', fill: t.ink2, anchor: 'end' }) +
-    `</g>` +
-    `<g class="rise" ${delay(500)}>` +
-    text(G, fmt(s.total), { x: R, y: 124, size: 40, style: 'sans-600', fill: t.ink, anchor: 'end', tracking: -0.02 }) +
-    text(G, 'contributions', { x: R, y: 146, size: 13.5, style: 'sans-400', fill: t.ink2, anchor: 'end' }) +
-    text(G, `BUSIEST WEEK ${fmt(week.total)} · ${dayLabel(week.start).toUpperCase()} TO ${dayLabel(week.end).toUpperCase()}`, { x: R, y: 172, size: 10.5, style: 'mono-500', fill: t.muted, anchor: 'end', tracking: 0.06 }) +
-    `</g>`;
-
-  // Range and legend in the empty bottom left corner.
-  const cardH = Math.ceil(oy + (W + 7) * C * SIN30 + 28);
-  const ly = cardH - 34;
-  const lx = 32 + measure('Less', 'sans-400', 11) + 16;
-  body +=
-    `<g class="fade" ${delay(900)}>` +
-    text(G, `${dayLabel(first, true).toUpperCase()} TO ${dayLabel(s.today, true).toUpperCase()}`, { x: 32, y: ly - 24, size: 10.5, style: 'mono-500', fill: t.muted, tracking: 0.06 }) +
-    text(G, 'Less', { x: 32, y: ly + 4, size: 11, style: 'sans-400', fill: t.muted });
-  t.levels.forEach((_, l) => {
-    const X = lx + l * 22;
-    const cube = (x, y, z) => {
-      const [a, b] = iso(x, y, z);
-      return `${num(X + a, 1)},${num(ly + b, 1)}`;
+  const proj = (c, x, y, z) => [x * c.cs - y * c.sn, (x * c.sn + y * c.cs) * c.se - z * c.ce];
+  const extent = (c, e) => {
+    let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+    const add = (x, y, z) => {
+      const [X, Y] = proj(c, x, y, z);
+      if (X < minx) minx = X;
+      if (X > maxx) maxx = X;
+      if (Y < miny) miny = Y;
+      if (Y > maxy) maxy = Y;
     };
-    const h = 3 + l * 2.5;
-    body +=
-      face(`r${l}`, [cube(8, 0, 0), cube(8, 8, 0), cube(8, 8, h), cube(8, 0, h)]) +
-      face(`l${l}`, [cube(0, 8, 0), cube(8, 8, 0), cube(8, 8, h), cube(0, 8, h)]) +
-      face(`t${l}`, [cube(0, 0, h), cube(8, 0, h), cube(8, 8, h), cube(0, 8, h)]);
-  });
-  body += text(G, 'More', { x: lx + 5 * 22 + 4, y: ly + 4, size: 11, style: 'sans-400', fill: t.muted }) + `</g>`;
+    for (const d of cells) {
+      const z = hOf(d.count) * e;
+      add(d.x, d.y, z); add(d.x + 1, d.y, z); add(d.x, d.y + 1, z); add(d.x + 1, d.y + 1, z);
+      add(d.x + 1, d.y + 1, 0); add(d.x, d.y + 1, 0); add(d.x + 1, d.y, 0);
+    }
+    // Room for the month labels along the front edge in 3D.
+    add(0, 7 + 1.7 * e, 0);
+    add(NW, 7 + 1.7 * e, 0);
+    return { minx, maxx, miny, maxy };
+  };
 
+  // Stage: the chart box. Its height comes from the 3D view at the scale that
+  // fits the width; the flat view is centred in it.
+  const head = cardHeading(G, t, L, {
+    title: 'Contribution calendar',
+    subtitle: `Every day from ${dayLabel(s.weeks[0][0].date, true)} to ${dayLabel(s.today, true)}, private work included.`,
+  });
+  const stageTop = head.bottom - 6;
+  const pad = 4;
+  const gutter = narrow ? 0 : 34; // weekday names left of the flat grid
+  const ext1 = extent(cam(1), 1);
+  const s1 = (inner - 2 * pad) / (ext1.maxx - ext1.minx);
+  const stageH = Math.ceil((ext1.maxy - ext1.miny) * s1 + 2 * pad);
+  const stageBottom = stageTop + stageH;
+
+  // The camera as an SVG matrix for a given e, fitted and centred in the stage.
+  const matrixAt = (e) => {
+    const c = cam(e);
+    const b = extent(c, e);
+    const left = m + pad + gutter * (1 - e);
+    const top = stageTop + pad + 18 * (1 - e);
+    const aw = W - m - pad - left;
+    // The flat grid sits a little above the stage's centre, clear of the
+    // figures under it; the swing brings it down into the full stage.
+    const ah = (stageBottom - pad - top) * (0.74 + 0.26 * e);
+    const bw = b.maxx - b.minx;
+    const bh = b.maxy - b.miny;
+    const sc = Math.min(aw / bw, ah / bh);
+    const ox = left + (aw - bw * sc) / 2 - b.minx * sc;
+    const oy = top + (ah - bh * sc) / 2 - b.miny * sc;
+    return { c, sc, M: [sc * c.cs, sc * c.sn * c.se, -sc * c.sn, sc * c.cs * c.se, ox, oy] };
+  };
+  const M0 = matrixAt(0);
+  const M1 = matrixAt(1);
+  const at1 = (x, y, z = 0) => [M1.M[0] * x + M1.M[2] * y + M1.M[4], M1.M[1] * x + M1.M[3] * y + M1.M[5] - z * M1.c.ce * M1.sc];
+  const at0 = (x, y) => [M0.M[0] * x + M0.M[2] * y + M0.M[4], M0.M[1] * x + M0.M[3] * y + M0.M[5]];
+
+  // In grid units, "up" by one unit of height is this vector (so that the
+  // camera matrix maps it to straight up on screen).
+  const u = [(-M1.c.ce / M1.c.se) * M1.c.sn, (-M1.c.ce / M1.c.se) * M1.c.cs];
+
+  // Timing (ms). The flat grid holds, the camera swings, bars rise in a wave
+  // from the oldest week to the newest, then the labels and stats settle.
+  const HOLD = 450;
+  const SWING = 1200;
+  const RISE = 650;
+  const waveStart = (x, y) => HOLD + SWING * (0.3 + 0.42 * (NW > 1 ? x / (NW - 1) : 0) + 0.04 * (y / 6));
+  const settle = HOLD + SWING * 0.76 + RISE; // the last bar is up
+
+  // Bars, painted back to front for the corner view.
+  const order = [...cells].sort((a, b) => a.x * M1.c.sn + a.y * M1.c.cs - (b.x * M1.c.sn + b.y * M1.c.cs));
+  let bars = '';
+  for (const d of order) {
+    const h = hOf(d.count);
+    const x0 = d.x + BAR_OFF, y0 = d.y + BAR_OFF;
+    const x1 = x0 + BAR_W, y1 = y0 + BAR_W;
+    const lx = num(u[0] * h), ly = num(u[1] * h);
+    bars +=
+      `<g class="l${d.level}${d.date === s.today ? ' td' : ''}" style="--h:${num(h)};--d:${Math.round(waveStart(d.x, d.y))}ms">` +
+      `<g transform="matrix(${BAR_W} 0 ${lx} ${ly} ${num(x0)} ${num(y1)})"><rect class="a" width="1" height="1"/></g>` +
+      `<g transform="matrix(0 ${BAR_W} ${lx} ${ly} ${num(x1)} ${num(y0)})"><rect class="b" width="1" height="1"/></g>` +
+      `<rect class="c" x="${num(x0)}" y="${num(y0)}" width="${BAR_W}" height="${BAR_W}" rx=".09" transform="translate(${lx} ${ly})"${d.date === s.today ? ' vector-effect="non-scaling-stroke"' : ''}/>` +
+      `</g>`;
+  }
+
+  // Month labels: above the flat grid, then along the front edge in 3D.
+  const months = [];
+  for (let x = 0, prev = -1; x < NW; x++) {
+    const mo = Number(weeks[x][0].date.slice(5, 7));
+    if (mo !== prev) months.push({ x, label: MONTHS[mo - 1] });
+    prev = mo;
+  }
+  if (months.length > 1 && months[1].x - months[0].x < 3) months.shift();
+  let labels2d = '';
+  let edge = -Infinity;
+  for (const mo of months) {
+    const [X, Y] = at0(mo.x + BAR_OFF, 0);
+    const tw = measure(mo.label, 'mono-400', 10.5);
+    if (X < edge || X + tw > W - m) continue;
+    labels2d += text(G, mo.label, { x: X, y: Y - 6, size: 10.5, style: 'mono-400', fill: t.muted });
+    edge = X + tw + 8;
+  }
+  if (gutter) {
+    const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    for (const row of [1, 3, 5]) {
+      const dow = weekdayOf(weeks[1][row].date);
+      const [X, Y] = at0(0, row + 0.5);
+      labels2d += text(G, names[dow], { x: X - 8, y: Y + 3.5, size: 10.5, style: 'mono-400', fill: t.muted, anchor: 'end' });
+    }
+  }
+  let labels3d = '';
+  const placed = [];
+  edge = -Infinity;
+  for (const mo of months) {
+    const [X, Y] = at1(mo.x + 0.5, 7.35);
+    const tw = measure(mo.label, 'mono-400', 10.5);
+    if (X < edge || X + tw > W - m) continue;
+    labels3d += text(G, mo.label, { x: X, y: Y + 11, size: 10.5, style: 'mono-400', fill: t.muted });
+    placed.push({ x: X, y: Y + 11, w: tw });
+    edge = X + tw + (narrow ? 6 : 10);
+  }
+
+  // Stats. A block is a label, a big value with its unit, and a line under it.
+  const block = (x, y, align, { label, value, unit, sub, size }, ms) => {
+    const anchor = align === 'end' ? 'end' : 'start';
+    const vw = measure(value, 'sans-600', size, -0.02);
+    const uw = measure(unit, 'sans-400', 13.5);
+    const vx = align === 'end' ? x - uw - 7 : x;
+    const ux = align === 'end' ? x : x + vw + 7;
+    return (
+      `<g class="rise" ${delay(ms)}>` +
+      text(G, label, { x, y, size: 12.5, style: 'sans-400', fill: t.muted, anchor }) +
+      text(G, value, { x: vx, y: y + size + 2, size, style: 'sans-600', fill: t.ink, anchor, tracking: -0.02 }) +
+      text(G, unit, { x: ux, y: y + size + 2, size: 13.5, style: 'sans-400', fill: t.ink2, anchor }) +
+      text(G, sub, { x, y: y + size + 20, size: 12, style: 'sans-400', fill: t.muted, anchor }) +
+      `</g>`
+    );
+  };
+  const total = { label: 'Last 12 months', value: fmt(s.total), unit: plural(s.total, 'contribution'), sub: `on ${fmt(s.activeDays)} active days`, size: 38 };
+  const busiest = { label: 'Busiest week', value: fmt(s.busiestWeek.total), unit: plural(s.busiestWeek.total, 'contribution'), sub: rangeLabel(s.busiestWeek.start, s.busiestWeek.end), size: 26 };
+  const longest = { label: 'Longest streak', value: String(s.longest.days), unit: plural(s.longest.days, 'day'), sub: s.longest.days ? rangeLabel(s.longest.start, s.longest.end) : 'no streak yet', size: 26 };
+  const current = { label: 'Current streak', value: String(s.current.days), unit: plural(s.current.days, 'day'), sub: s.current.days ? `since ${dayLabel(s.current.start)}` : 'none in progress', size: 26 };
+
+  // Legend: five small bars, one per level, under the same camera.
+  const legendW = measure('Less', 'sans-400', 11) + 12 + 5 * 19 + 2 + measure('More', 'sans-400', 11);
+  const legend = (x, y, ms) => {
+    const sc = 6.5;
+    const c = M1.c;
+    let out = `<g class="fade" ${delay(ms)}>` + text(G, 'Less', { x, y: y + 4, size: 11, style: 'sans-400', fill: t.muted });
+    const lx = x + measure('Less', 'sans-400', 11) + 12;
+    const Mlin = [sc * c.cs, sc * c.sn * c.se, -sc * c.sn, sc * c.cs * c.se];
+    for (let l = 0; l < 5; l++) {
+      const h = 0.25 + l * 0.85;
+      const gx = lx + l * 19;
+      const gy = y + 4;
+      out += `<g class="l${l}" transform="matrix(${Mlin.map((v) => num(v, 4)).join(' ')} ${num(gx)} ${num(gy)})">`;
+      out += `<g transform="matrix(1 0 ${num(u[0] * h, 3)} ${num(u[1] * h, 3)} 0 1)"><rect class="a" width="1" height="1"/></g>`;
+      out += `<g transform="matrix(0 1 ${num(u[0] * h, 3)} ${num(u[1] * h, 3)} 1 0)"><rect class="b" width="1" height="1"/></g>`;
+      out += `<rect class="c" width="1" height="1" rx=".09" transform="translate(${num(u[0] * h, 3)} ${num(u[1] * h, 3)})"/></g>`;
+    }
+    out += text(G, 'More', { x: lx + 5 * 19 + 2, y: y + 4, size: 11, style: 'sans-400', fill: t.muted }) + `</g>`;
+    return out;
+  };
+
+  let body = head.svg;
+  let height;
+  let extra = '';
+  if (!narrow) {
+    // The year total is the hero, top right beside the heading, where the
+    // newest weeks never reach. The other three figures form a row in the
+    // bottom left corner, placed clear of the month labels that run along the
+    // front edge above them, and the legend sits under the newest weeks.
+    const R = W - m;
+    extra += block(R, 44, 'end', total, 100);
+    const rowX = [m, m + 172, m + 344];
+    const y0 = Math.max(...placed.filter((l) => l.x < rowX[2] + 150).map((l) => l.y + 16), stageTop + 60);
+    extra += block(rowX[0], y0, 'start', longest, 160);
+    extra += block(rowX[1], y0, 'start', current, 210);
+    extra += block(rowX[2], y0, 'start', busiest, 260);
+    const legendY = Math.max(placed.at(-1).y + 24, y0 + 48);
+    extra += legend(R - legendW, legendY, 300);
+    height = Math.max(stageBottom, y0 + 62, legendY + 10) + 24;
+  } else {
+    const tiles = statTiles(G, t, L, [
+      [total.label, total.value, `on ${fmt(s.activeDays)} days`],
+      [busiest.label, busiest.value, busiest.sub],
+      [longest.label, longest.value, longest.unit],
+      [current.label, current.value, current.unit],
+    ], stageBottom + 30);
+    extra += tiles.svg;
+    extra += legend(m, tiles.bottom + 30, 300);
+    height = tiles.bottom + 30 + 10 + 26;
+  }
+
+  body +=
+    `<g class="stage">` +
+    `<g class="g2" opacity="0">${labels2d}</g>` +
+    `<g class="world" transform="matrix(${M1.M.map((v) => num(v, 4)).join(' ')})">${bars}</g>` +
+    `<g class="g3">${labels3d}</g>` +
+    `</g>` +
+    extra;
+
+  // Camera keyframes along the eased path; CSS interpolates between them.
+  const STEPS = 12;
+  let frames = '';
+  for (let k = 0; k <= STEPS; k++) {
+    const { M } = matrixAt(easeInOutCubic(k / STEPS));
+    frames += `${num((100 * k) / STEPS, 2)}%{transform:matrix(${M.map((v) => num(v, 4)).join(',')})}`;
+  }
   const css =
-    t.levels.map((c, l) => `.t${l}{fill:${c}}.l${l}{fill:${shade(c, 0.84)}}.r${l}{fill:${shade(c, 0.7)}}`).join('') +
+    t.levels.map((c, l) => `.l${l} .c{fill:${c}}.l${l} .a{fill:${shade(c, 0.84)}}.l${l} .b{fill:${shade(c, 0.68)}}`).join('') +
     `
-.wk{animation:drop .7s cubic-bezier(.2,.7,.2,1) both}
-.today{animation:blink 2.4s ease-in-out 1.6s infinite;opacity:0}
-@keyframes drop{from{opacity:0;transform:translateY(-14px)}to{opacity:1;transform:none}}
-@keyframes blink{0%,100%{opacity:0}50%{opacity:1}}`;
+.td .c{stroke:${t.live};stroke-width:1.6}
+.stage{animation:fade .3s ease-out both}
+.world{animation:cam ${SWING}ms linear ${HOLD}ms both}
+.a,.b{transform-box:fill-box;transform-origin:0 0;animation:grow ${RISE}ms cubic-bezier(.2,.7,.2,1) var(--d) both}
+.c{animation:lift ${RISE}ms cubic-bezier(.2,.7,.2,1) var(--d) both}
+.g2{animation:out .35s ease-out ${HOLD + 40}ms both}
+.g3{animation:fade .5s ease-out ${HOLD + SWING * 0.72}ms both}
+@keyframes cam{${frames}}
+@keyframes grow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes lift{from{transform:none}to{transform:translate(calc(var(--h)*${num(u[0], 4)}px),calc(var(--h)*${num(u[1], 4)}px))}}
+@keyframes out{from{opacity:1}to{opacity:0}}`;
 
   return frame({
-    height: cardH,
-    title: `Contribution calendar: ${fmt(s.total)} contributions from ${dayLabel(first, true)} to ${dayLabel(s.today, true)}, busiest week ${week.total}.`,
+    L, height,
+    title: `Contribution calendar: ${fmt(s.total)} contributions on ${s.activeDays} active days from ${dayLabel(s.weeks[0][0].date, true)} to ${dayLabel(s.today, true)}. Busiest week ${s.busiestWeek.total}, longest streak ${s.longest.days} days, current streak ${s.current.days} days.`,
     G, css, body, t,
   });
 }
 
 // ---------------------------------------------------------------------------
-// Activity
+// Recent activity: the last 31 days
 
 function niceMax(v) {
   if (v <= 4) return 4;
@@ -597,24 +932,24 @@ function monotone(points) {
   return { d, length };
 }
 
-function activity(t, s) {
+function activity(t, L, s) {
   const G = new Glyphs();
-  const { series, total, activeDays, current, longest, updated } = s;
-  let body = cardHeading(G, t, {
-    title: 'Contributions',
-    subtitle: 'Daily contributions over the last 31 days. Private repositories are included.',
-    note: `Updated ${updated}`,
+  const { m, W, narrow } = L;
+  const { series, window: w } = s;
+  const head = cardHeading(G, t, L, {
+    title: 'Recent activity',
+    subtitle: `Daily contributions over the last ${series.length} days. Private repositories are included.`,
   });
+  let body = head.svg;
+  const tiles = statTiles(G, t, L, [
+    [`Last ${series.length} days`, fmt(w.total), ''],
+    ['Active days', fmt(w.activeDays), `of ${series.length}`],
+    ['Best day', fmt(w.best.count), `on ${dayLabel(w.best.date)}`],
+    ['Average per day', w.average.toFixed(1), ''],
+  ], head.bottom);
+  body += tiles.svg;
 
-  const days = (n) => (n === 1 ? 'day' : 'days');
-  body += statTiles(G, t, [
-    ['Last 12 months', fmt(total), ''],
-    ['Active days, 12 months', fmt(activeDays), ''],
-    ['Current streak', String(current), days(current)],
-    ['Longest streak', String(longest), days(longest)],
-  ]);
-
-  const plot = { x0: 70, x1: WIDTH - 36, y0: 196, y1: 318 };
+  const plot = { x0: m + 38, x1: W - m - 4, y0: tiles.bottom + 42, y1: tiles.bottom + 42 + (narrow ? 110 : 122) };
   const peak = Math.max(...series.map((d) => d.count));
   const max = niceMax(Math.max(peak, 1));
   const X = (i) => plot.x0 + (i / (series.length - 1)) * (plot.x1 - plot.x0);
@@ -625,7 +960,8 @@ function activity(t, s) {
     body += text(G, String(v), { x: plot.x0 - 12, y: Y(v) + 3.5, size: 10.5, style: 'mono-400', fill: t.muted, anchor: 'end' });
   }
   const lastIndex = series.length - 1;
-  for (let i = 0; i <= lastIndex; i += 6) {
+  const every = narrow ? 10 : 6;
+  for (let i = 0; i <= lastIndex; i += every) {
     const anchor = i === 0 ? 'start' : i === lastIndex ? 'end' : 'middle';
     body += text(G, dayLabel(series[i].date), { x: X(i), y: plot.y1 + 22, size: 10.5, style: 'mono-400', fill: t.muted, anchor });
   }
@@ -633,8 +969,11 @@ function activity(t, s) {
   const pts = series.map((d, i) => [X(i), Y(d.count)]);
   const { d, length } = monotone(pts);
   const dash = Math.ceil(length * 1.02);
+  // The wash under the line is revealed by a clip that widens at the pace the
+  // line is drawn, so it never shows ahead of the line.
+  const defs = `<clipPath id="reveal"><rect class="reveal" x="${plot.x0}" y="${plot.y0 - 10}" width="${plot.x1 - plot.x0}" height="${plot.y1 - plot.y0 + 10}"/></clipPath>`;
   body +=
-    `<path class="area" d="${d}L${num(plot.x1)},${plot.y1}L${plot.x0},${plot.y1}Z" fill="${t.accent}" fill-opacity="${t.washOpacity}"/>` +
+    `<path class="area" clip-path="url(#reveal)" d="${d}L${num(plot.x1)},${plot.y1}L${plot.x0},${plot.y1}Z" fill="${t.accent}" fill-opacity="${t.washOpacity}"/>` +
     `<path class="line" d="${d}" fill="none" stroke="${t.accent}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="${dash}"/>`;
 
   const peakIndex = series.findIndex((x) => x.count === peak);
@@ -643,21 +982,26 @@ function activity(t, s) {
     const isLast = i === lastIndex;
     if (isLast) body += `<circle class="pulse" cx="${num(cx)}" cy="${num(cy)}" r="4" fill="none" stroke="${t.accent}" stroke-width="2"/>`;
     body += `<circle class="dot" cx="${num(cx)}" cy="${num(cy)}" r="4" fill="${t.accent}" stroke="${t.surface}" stroke-width="2"/>`;
-    const lx = Math.min(Math.max(cx, plot.x0 + 12), plot.x1 - 6);
-    body += `<g class="fade" ${delay(1500)}>${text(G, String(series[i].count), { x: lx, y: cy - 12, size: 11.5, style: 'mono-500', fill: t.ink2, anchor: isLast ? 'end' : 'middle' })}</g>`;
+    // The last value sits left of its dot when the line is climbing into it.
+    const climbing = isLast && series[i].count > series[i - 1].count;
+    const lx = isLast ? cx - 10 : Math.max(cx, plot.x0 + 12);
+    const ly = climbing ? cy + 4 : cy - 12;
+    body += `<g class="fade" ${delay(1000)}>${text(G, String(series[i].count), { x: lx, y: ly, size: 11.5, style: 'mono-500', fill: t.ink2, anchor: isLast ? 'end' : 'middle' })}</g>`;
   }
 
   const css = `
-.line{stroke-dashoffset:0;animation:draw 1.6s cubic-bezier(.4,0,.2,1) .25s both}
-.area{animation:fade .9s ease-out 1s both}
-.dot{transform-box:fill-box;transform-origin:center;animation:pop .45s cubic-bezier(.3,1.6,.5,1) 1.45s both}
+.line{stroke-dashoffset:0;animation:draw .9s cubic-bezier(.4,0,.2,1) .15s both}
+.reveal{transform-box:fill-box;transform-origin:left;animation:reveal .9s cubic-bezier(.4,0,.2,1) .15s both}
+.area{animation:fade .4s ease-out .3s both}
+.dot{transform-box:fill-box;transform-origin:center;animation:pop .4s cubic-bezier(.3,1.6,.5,1) .95s both}
 @keyframes draw{from{stroke-dashoffset:${dash}}to{stroke-dashoffset:0}}
+@keyframes reveal{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 @keyframes pop{from{transform:scale(0)}to{transform:scale(1)}}`;
 
   return frame({
-    height: 362,
-    title: `Contributions: ${total} in the last 12 months, ${activeDays} active days, current streak ${current} ${days(current)}, longest streak ${longest} ${days(longest)}.`,
-    G, css, body, t,
+    L, height: plot.y1 + 46,
+    title: `Recent activity: ${w.total} contributions in the last ${series.length} days on ${w.activeDays} active days, best day ${w.best.count} on ${dayLabel(w.best.date, true)}, ${w.average.toFixed(1)} per day on average.`,
+    G, defs, css, body, t,
   });
 }
 
@@ -670,35 +1014,81 @@ const duration = (sec) => {
   return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
 };
 
-function languages(t, data) {
+function languages(t, L, data) {
   const G = new Glyphs();
+  const { m, W, narrow } = L;
   const wakatime = data.source === 'wakatime';
-  let body = cardHeading(G, t, wakatime
+  const head = cardHeading(G, t, L, wakatime
     ? { title: 'Languages', subtitle: `Time in the editor over the last 7 days: ${duration(data.total)}.`, note: 'WakaTime · last 7 days' }
     : { title: 'Languages', subtitle: 'Share of code in repositories I pushed to in the last 12 months.', note: 'GitHub · by code size' });
+  let body = head.svg;
 
   const rows = data.rows;
-  const barX = 196, barMax = WIDTH - 32 - barX - 86;
+  const nameSize = narrow ? 13 : 14;
+  const nameW = Math.max(...rows.map((r) => measure(r.name, 'sans-500', nameSize)));
+  const barX = m + Math.max(narrow ? 0 : 164, Math.ceil(nameW) + 20);
+  const valueW = Math.max(...rows.map((r) => measure(wakatime ? duration(r.value) : `${r.share.toFixed(1)}%`, 'mono-400', 12)));
+  const barMax = W - m - barX - valueW - 12;
   const top = rows[0].value;
+  const rowH = narrow ? 30 : 32;
+  const y0 = head.bottom + 10;
   rows.forEach((row, i) => {
-    const y = 106 + i * 32;
+    const y = y0 + i * rowH;
     const w = Math.max(4, (row.value / top) * barMax);
     const x1 = barX + w;
     const r = 4;
     const color = row.other ? t.other : t.accent;
     const valueText = wakatime ? duration(row.value) : `${row.share.toFixed(1)}%`;
     body +=
-      `<g class="fade" ${delay(120 + i * 70)}>${text(G, row.name, { x: 32, y: y + 5, size: 14, style: 'sans-500', fill: row.other ? t.ink2 : t.ink })}</g>` +
-      `<path class="bar" ${delay(200 + i * 70)} d="M${barX},${y - 6}H${num(x1 - r)}A${r},${r} 0 0 1 ${num(x1)},${y - 6 + r}V${y + 6 - r}A${r},${r} 0 0 1 ${num(x1 - r)},${y + 6}H${barX}Z" fill="${color}"/>` +
-      `<g class="fade" ${delay(520 + i * 70)}>${text(G, valueText, { x: x1 + 10, y: y + 4.5, size: 12, style: 'mono-400', fill: t.ink2 })}</g>`;
+      text(G, row.name, { x: m, y: y + 5, size: nameSize, style: 'sans-500', fill: row.other ? t.ink2 : t.ink }) +
+      `<path class="bar" ${delay(80 + i * 50)} d="M${barX},${y - 6}H${num(x1 - r)}A${r},${r} 0 0 1 ${num(x1)},${y - 6 + r}V${y + 6 - r}A${r},${r} 0 0 1 ${num(x1 - r)},${y + 6}H${barX}Z" fill="${color}"/>` +
+      `<g class="fade" ${delay(380 + i * 50)}>${text(G, valueText, { x: x1 + 10, y: y + 4.5, size: 12, style: 'mono-400', fill: t.ink2 })}</g>`;
   });
   const css = `
-.bar{transform-box:fill-box;transform-origin:left center;animation:grow .9s cubic-bezier(.2,.7,.2,1) both}
+.bar{transform-box:fill-box;transform-origin:left center;animation:grow .7s cubic-bezier(.2,.7,.2,1) both}
 @keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}`;
   return frame({
-    height: 106 + (rows.length - 1) * 32 + 34,
+    L, height: y0 + (rows.length - 1) * rowH + 34,
     title: `Languages: ${rows.map((r) => `${r.name} ${wakatime ? duration(r.value) : `${r.share.toFixed(1)}%`}`).join(', ')}`,
     G, css, body, t,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Footer: when the graphics were last rendered, and the profile view count
+
+function footer(t, L, meta) {
+  const G = new Glyphs();
+  const { m, W, narrow } = L;
+  const updated = `UPDATED ${meta.updated.toUpperCase()}`;
+  const viewsLabel = `PROFILE VIEWS SINCE ${VIEWS_SINCE.toUpperCase()}`;
+  const views = meta.views == null ? null : fmt(meta.views);
+  let body = '';
+  let height;
+  if (!narrow) {
+    height = 54;
+    const y = 32;
+    body += text(G, updated, { x: m, y, size: 10.5, style: 'mono-400', fill: t.muted, tracking: 0.08 });
+    if (views) {
+      const lw = measure(viewsLabel, 'mono-400', 10.5, 0.08);
+      body +=
+        text(G, views, { x: W - m - lw - 10, y: y + 0.5, size: 14, style: 'sans-600', fill: t.ink, anchor: 'end', tracking: -0.01 }) +
+        text(G, viewsLabel, { x: W - m, y, size: 10.5, style: 'mono-400', fill: t.muted, anchor: 'end', tracking: 0.08 });
+    }
+  } else {
+    height = views ? 74 : 54;
+    body += text(G, updated, { x: m, y: 32, size: 10.5, style: 'mono-400', fill: t.muted, tracking: 0.08 });
+    if (views) {
+      const vw = measure(views, 'sans-600', 14, -0.01);
+      body +=
+        text(G, views, { x: m, y: 54.5, size: 14, style: 'sans-600', fill: t.ink, tracking: -0.01 }) +
+        text(G, viewsLabel, { x: m + vw + 10, y: 54, size: 10.5, style: 'mono-400', fill: t.muted, tracking: 0.08 });
+    }
+  }
+  return frame({
+    L, height,
+    title: `Graphics updated ${meta.updated}.${views ? ` ${views} profile views since ${VIEWS_SINCE}.` : ''}`,
+    G, body: `<g class="fade">${body}</g>`, t,
   });
 }
 
@@ -718,6 +1108,21 @@ async function graphql(token, query, variables = {}) {
 
 const LEVEL = ['NONE', 'FIRST_QUARTILE', 'SECOND_QUARTILE', 'THIRD_QUARTILE', 'FOURTH_QUARTILE'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// Longest run of consecutive active days among `dates` (sorted, ISO).
+function longestStreak(dates, count) {
+  let best = { days: 0, start: null, end: null };
+  let run = 0;
+  let start = null;
+  for (const date of dates) {
+    if (count(date) > 0) {
+      if (!run) start = date;
+      run++;
+      if (run > best.days) best = { days: run, start, end: date };
+    } else run = 0;
+  }
+  return best;
+}
 
 async function contributions(token) {
   const { user } = await graphql(
@@ -743,35 +1148,43 @@ async function contributions(token) {
     }
   }
   const count = (iso) => counts.get(iso) ?? 0;
+  const allDates = [...counts.keys()].filter((d) => d <= today).sort();
 
-  // Today is still in progress, so the chart ends yesterday and a streak
-  // survives an empty today.
+  // Today is still in progress, so the recent chart ends yesterday and a
+  // streak survives an empty today.
   const series = [];
   for (let i = 31; i >= 1; i--) {
     const date = shiftDay(today, -i);
     series.push({ date, count: count(date) });
   }
+  const windowTotal = series.reduce((a, d) => a + d.count, 0);
+  const window = {
+    total: windowTotal,
+    activeDays: series.filter((d) => d.count > 0).length,
+    best: series.reduce((a, d) => (d.count > a.count ? d : a), series[0]),
+    average: windowTotal / series.length,
+  };
 
   let activeDays = 0;
   for (let i = 0; i < 365; i++) if (count(shiftDay(today, -i)) > 0) activeDays++;
 
-  let current = 0;
-  for (let d = count(today) > 0 ? today : shiftDay(today, -1); count(d) > 0; d = shiftDay(d, -1)) current++;
-
-  let longest = 0;
-  let run = 0;
-  let bestDay = { date: today, count: 0 };
-  for (const date of [...counts.keys()].filter((d) => d <= today).sort()) {
-    run = count(date) > 0 ? run + 1 : 0;
-    longest = Math.max(longest, run);
-    if (count(date) > bestDay.count) bestDay = { date, count: count(date) };
+  let current = { days: 0, start: null };
+  for (let d = count(today) > 0 ? today : shiftDay(today, -1); count(d) > 0; d = shiftDay(d, -1)) {
+    current = { days: current.days + 1, start: d };
   }
+  const yearAgo = shiftDay(today, -364);
+  const longest = longestStreak(allDates.filter((d) => d >= yearAgo), count);
+
+  let bestDay = { date: today, count: 0 };
+  for (const date of allDates) if (count(date) > bestDay.count) bestDay = { date, count: count(date) };
 
   const perYear = [...contributionYears].sort().map((year) => ({
     year,
     total: [...counts].reduce((sum, [date, n]) => (date.startsWith(`${year}-`) ? sum + n : sum), 0),
   }));
   const year = Number(today.slice(0, 4));
+  const activeThisYear = allDates.filter((d) => d.startsWith(`${year}-`) && count(d) > 0).length;
+  const daysThisYear = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${year}-01-01T00:00:00Z`)) / DAY) + 1;
 
   // Weekday averages over the last 52 complete weeks, Monday first.
   const sums = Array(7).fill(0);
@@ -782,9 +1195,8 @@ async function contributions(token) {
     .map((w) => ({ total: w.reduce((a, d) => a + d.count, 0), start: w[0].date, end: w.at(-1).date }))
     .reduce((a, b) => (b.total > a.total ? b : a));
 
-  const updated = dayLabel(new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date()), true);
   return {
-    today, updated, weeks, series, activeDays, current, longest, bestDay, perYear, year, weekdays, busiestWeek,
+    today, weeks, series, window, activeDays, current, longest, bestDay, perYear, year, activeThisYear, daysThisYear, weekdays, busiestWeek,
     total: contributionCalendar.totalContributions,
     allTime: perYear.reduce((a, y) => a + y.total, 0),
     thisYear: perYear.find((y) => y.year === year)?.total ?? 0,
@@ -826,6 +1238,26 @@ async function repositoryLanguages(token) {
   return { source: 'github', includesPrivate: repos.some((r) => r.isPrivate), rows: topRows([...bytes]) };
 }
 
+// The komarev badge counts profile views; README.md keeps loading it (as a 1px
+// image) so the count keeps growing, and the footer shows the number in the
+// profile's own type. The last successful read is kept in assets/meta.json.
+const META_FILE = join(ASSETS, 'meta.json');
+const readMeta = () => (existsSync(META_FILE) ? JSON.parse(readFileSync(META_FILE, 'utf8')) : {});
+
+async function profileViews() {
+  const res = await fetch(`https://komarev.com/ghpvc/?username=${LOGIN}`, { headers: { 'User-Agent': 'profile-graphics' } });
+  if (!res.ok) throw new Error(`komarev ${res.status}`);
+  const svg = await res.text();
+  const m = [...svg.matchAll(/>([\d,]+)<\/text>/g)].pop();
+  if (!m) throw new Error('komarev: no count in badge');
+  return Number(m[1].replace(/,/g, ''));
+}
+
+function now() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: TIME_ZONE, day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()).map((p) => [p.type, p.value]));
+  return `${parts.day} ${parts.month} ${parts.year} · ${parts.hour}:${parts.minute} WIB`;
+}
+
 // ---------------------------------------------------------------------------
 
 function write(name, svg) {
@@ -835,26 +1267,47 @@ function write(name, svg) {
   console.log(`wrote assets/${name} (${(svg.length / 1024).toFixed(1)} KB)`);
 }
 
-const eachTheme = (name, render) => {
-  for (const [mode, t] of Object.entries(THEMES)) write(`${name}-${mode}.svg`, render(t));
+const eachVariant = (name, render) => {
+  for (const L of Object.values(LAYOUTS)) {
+    for (const [mode, t] of Object.entries(THEMES)) write(`${name}-${mode}${L.suffix}.svg`, render(t, L));
+  }
 };
 
 async function main() {
-  eachTheme('header', header);
-  eachTheme('stack', stack);
-  if (process.argv.includes('--static')) return;
+  const args = process.argv.slice(2);
+  eachVariant('header', header);
+  eachVariant('stack', stack);
+  if (args.includes('--static')) return;
 
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) throw new Error('GITHUB_TOKEN is required for the data cards (or pass --static).');
 
-  const data = await contributions(token);
-  eachTheme('stats', (t) => stats(t, data));
-  eachTheme('calendar', (t) => calendar(t, data));
-  eachTheme('activity', (t) => activity(t, data));
-  console.log(`contributions: ${data.total} in 12 months, ${data.allTime} all time, streak ${data.current}/${data.longest}`);
+  // --cache FILE keeps the fetched data between runs while working on layouts.
+  const cacheFile = args.includes('--cache') ? args[args.indexOf('--cache') + 1] : null;
+  let cached = cacheFile && existsSync(cacheFile) ? JSON.parse(readFileSync(cacheFile, 'utf8')) : null;
 
-  let langs = null;
-  if (process.env.WAKATIME_API_KEY) {
+  const data = cached?.data ?? (await contributions(token));
+  eachVariant('stats', (t, L) => stats(t, L, data));
+  eachVariant('calendar', (t, L) => calendar(t, L, data));
+  eachVariant('activity', (t, L) => activity(t, L, data));
+  console.log(`contributions: ${data.total} in 12 months, ${data.allTime} all time, streak ${data.current.days}/${data.longest.days}`);
+
+  const meta = readMeta();
+  let views = cached?.views;
+  if (views == null) {
+    try {
+      views = await profileViews();
+    } catch (err) {
+      console.warn(`Profile views kept from the last run: ${err.message}`);
+      views = meta.views ?? null;
+    }
+  }
+  const updated = now();
+  eachVariant('footer', (t, L) => footer(t, L, { updated, views }));
+  writeFileSync(META_FILE, `${JSON.stringify({ updated, views }, null, 2)}\n`);
+
+  let langs = cached?.langs ?? null;
+  if (!langs && process.env.WAKATIME_API_KEY) {
     try {
       langs = await wakatimeLanguages(process.env.WAKATIME_API_KEY);
       if (!langs) console.log('WakaTime has under an hour of activity in the last 7 days, using repository languages.');
@@ -873,10 +1326,12 @@ async function main() {
     langs = fromPrivate ?? (await repositoryLanguages(token));
     if (!langs.includesPrivate && existsSync(join(ASSETS, 'languages-light.svg'))) {
       console.log('Languages card kept as is: this token cannot see private repositories (set PROFILE_TOKEN).');
-      return;
+      langs = null;
     }
   }
-  eachTheme('languages', (t) => languages(t, langs));
+  if (cacheFile && !cached) writeFileSync(cacheFile, JSON.stringify({ data, views, langs }));
+  if (!langs) return;
+  eachVariant('languages', (t, L) => languages(t, L, langs));
   console.log(`languages (${langs.source}): ${langs.rows.map((r) => `${r.name} ${r.share.toFixed(1)}%`).join(', ')}`);
 }
 
