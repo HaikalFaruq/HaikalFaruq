@@ -8,14 +8,16 @@ on:
     branches: [main]
     paths:
       - scripts/**
+      - site/**
       - .github/workflows/profile.yml
 
 permissions:
   contents: write
 
+# Queued rather than cancelled, so a Pages deployment is never cut off halfway.
 concurrency:
   group: profile-graphics
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   render:
@@ -26,6 +28,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
 
       - name: Render graphics
         run: node scripts/render.mjs
@@ -37,6 +41,8 @@ jobs:
           WAKATIME_API_KEY: ${{ secrets.WAKATIME_API_KEY }}
 
       - name: Commit changes
+        # A run on another branch only previews the interactive calendar.
+        if: github.ref == 'refs/heads/main'
         run: |
           git add assets
           if git diff --cached --quiet; then
@@ -47,3 +53,28 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore: refresh profile graphics"
           git push
+
+      # The interactive calendar the calendar card links to, built from the
+      # data just fetched.
+      - name: Build interactive calendar
+        working-directory: site
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/dist
+
+  deploy:
+    needs: render
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

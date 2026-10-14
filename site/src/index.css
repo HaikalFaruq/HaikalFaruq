@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* The profile's light and dark palettes (THEMES in scripts/render.mjs). The
+   calendar reads these variables directly. */
+:root {
+  color-scheme: light;
+  --color-background: #ffffff;
+  --color-foreground: #162f4a;
+  --color-border: #d8dee4;
+  --color-muted-foreground: #66727f;
+  --color-link: #2368b0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --color-background: #0e1a28;
+    --color-foreground: #e6edf3;
+    --color-border: #22324a;
+    --color-muted-foreground: #7f91a5;
+    --color-link: #3f8ee8;
+  }
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}

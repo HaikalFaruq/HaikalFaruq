@@ -25,6 +25,9 @@
 // GitHub loads these files as <img>, where web fonts and external images are not
 // available, so text is drawn from Geist outlines (glyphs.json) and logos from
 // Simple Icons paths (icons.json).
+//
+// The calendar card links to an interactive version of itself (site/, published
+// to GitHub Pages), which reads the same days from assets/contributions.json.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -698,6 +701,8 @@ function calendar(t, L, s) {
     title: 'Contribution calendar',
     subtitle: `Every day from ${dayLabel(s.weeks[0][0].date, true)} to ${dayLabel(s.today, true)}, private work included.`,
   });
+  // README.md wraps this card in a link to the interactive version.
+  head.svg += text(G, 'Interactive view ↗', { x: W - m, y: 46, size: 13, style: 'sans-500', fill: t.accent, anchor: 'end' });
   const boxX = m, boxW = W - 2 * m, boxTop = head.bottom + 4;
   const pad = narrow ? 10 : 20;
   const gutter = narrow ? 0 : 34; // weekday names left of the flat grid
@@ -1310,6 +1315,11 @@ function write(name, svg) {
   console.log(`wrote assets/${name} (${(svg.length / 1024).toFixed(1)} KB)`);
 }
 
+// The calendar card's days for the interactive version, one day per line so
+// the daily diff stays small.
+const contributionsJson = (s) =>
+  `{\n  "today": "${s.today}",\n  "days": [\n${s.weeks.flat().map((d) => `    {"date": "${d.date}", "count": ${d.count}}`).join(',\n')}\n  ]\n}\n`;
+
 const eachVariant = (name, render) => {
   for (const L of Object.values(LAYOUTS)) {
     for (const [mode, t] of Object.entries(THEMES)) write(`${name}-${mode}${L.suffix}.svg`, render(t, L));
@@ -1332,6 +1342,7 @@ async function main() {
   const data = cached?.data ?? (await contributions(token));
   eachVariant('stats', (t, L) => stats(t, L, data));
   eachVariant('calendar', (t, L) => calendar(t, L, data));
+  write('contributions.json', contributionsJson(data));
   eachVariant('activity', (t, L) => activity(t, L, data));
   console.log(`contributions: ${data.total} in 12 months, ${data.allTime} all time, streak ${data.current.days}/${data.longest.days}`);
 

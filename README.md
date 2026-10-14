@@ -35,12 +35,14 @@ I'm a software engineer in Bekasi, Indonesia. I build web and mobile products fo
 </p>
 
 <p>
+<a href="https://haikalfaruq.github.io/HaikalFaruq/">
 <picture>
   <source media="(prefers-color-scheme: dark) and (min-width: 701px)" srcset="assets/calendar-dark.svg">
   <source media="(prefers-color-scheme: light) and (min-width: 701px)" srcset="assets/calendar-light.svg">
   <source media="(prefers-color-scheme:dark)" srcset="assets/calendar-dark-narrow.svg">
-  <img alt="Contribution calendar: every day of the last 12 months as a 3D skyline, with the year total, busiest week, and streaks." src="assets/calendar-light-narrow.svg" width="100%">
+  <img alt="Contribution calendar: every day of the last 12 months as a heat map that folds into a 3D skyline, with the year total, busiest week, and streaks. Opens the interactive version." src="assets/calendar-light-narrow.svg" width="100%">
 </picture>
+</a>
 </p>
 
 <p>
