@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://haikal-portofolio.framer.website/"><img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-162F4A?style=for-the-badge&logo=framer&logoColor=white"></a>
+  <a href="https://haikalfaruq.vercel.app/"><img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-162F4A?style=for-the-badge&logo=framer&logoColor=white"></a>
   <a href="https://www.linkedin.com/in/muhammad-haikal-faruq-923b62336/"><img alt="LinkedIn" src="https://img.shields.io/badge/LinkedIn-162F4A?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTQgMmgxNmEyIDIgMCAwIDEgMiAydjE2YTIgMiAwIDAgMS0yIDJINGEyIDIgMCAwIDEtMi0yVjRhMiAyIDAgMCAxIDItMlptMS42IDcuNFYxOWgzVjkuNGgtM1ptMS41LTQuNmExLjcgMS43IDAgMSAwIDAgMy40IDEuNyAxLjcgMCAwIDAgMC0zLjRaTTEwLjQgOS40VjE5aDN2LTVjMC0xLjQuNi0yLjQgMS45LTIuNCAxLjIgMCAxLjYuOSAxLjYgMi4zVjE5aDN2LTUuN2MwLTIuOC0xLjQtNC4xLTMuNS00LjEtMS41IDAtMi40LjgtMi45IDEuNlY5LjRoLTMuMVoiLz48L3N2Zz4K"></a>
   <a href="mailto:haikalfaruq2004@gmail.com"><img alt="Email" src="https://img.shields.io/badge/Email-162F4A?style=for-the-badge&logo=gmail&logoColor=white"></a>
   <a href="https://github.com/HaikalFaruq?tab=followers"><img alt="GitHub followers" src="https://img.shields.io/github/followers/HaikalFaruq?style=for-the-badge&logo=github&logoColor=white&label=Followers&labelColor=162F4A&color=2368B0"></a>
